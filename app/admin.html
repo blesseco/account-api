@@ -1,0 +1,184 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Accounts Admin</title>
+<style>
+  body{font-family:system-ui,Segoe UI,Roboto,Arial;margin:24px;max-width:1200px}
+  h1{font-size:22px;margin:0 0 14px}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin:12px 0}
+  label{font-size:12px;color:#444;display:block;margin-bottom:4px}
+  input,button,select{padding:8px 10px;font-size:14px}
+  .card{border:1px solid #e5e7eb;border-radius:10px;padding:14px;margin:12px 0}
+  table{border-collapse:collapse;width:100%}
+  th,td{border:1px solid #e5e7eb;padding:8px;text-align:left}
+  th{background:#f9fafb}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef2ff}
+  .ok{color:#065f46}.err{color:#b91c1c}
+</style>
+<h1>Accounts Admin</h1>
+
+<div class="card">
+  <div class="row">
+    <div><label>Admin API Key</label><input id="k" type="password" placeholder="admin.&lt;secret&gt;" style="width:320px"></div>
+    <div><label>From</label><input id="df" type="text" placeholder="YYYY-MM-DD"></div>
+    <div><label>To</label><input id="dt" type="text" placeholder="YYYY-MM-DD"></div>
+    <div><label>Owner Keys (optional)</label><input id="ok" type="text" placeholder="sanjay,rahul,shoib"></div>
+    <div><button id="loadStats">Load Stats</button></div>
+  </div>
+  <div id="meta" style="font-size:12px;color:#666"></div>
+  <div id="totals" class="row"></div>
+  <div class="card">
+    <b>Per Owner</b>
+    <div id="owners"></div>
+  </div>
+  <div class="card">
+    <b>Per Consumer</b>
+    <div id="consumers"></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row">
+    <b style="font-size:16px">Keys</b>
+    <button id="loadKeys">Refresh</button>
+    <span id="msg" class="pill"></span>
+  </div>
+  <div id="keys"></div>
+</div>
+
+<div class="card">
+  <div class="row">
+    <b style="font-size:16px">Grants (consumer → owner)</b>
+    <button id="loadGrants">Refresh</button>
+    <span id="gmsg" class="pill"></span>
+  </div>
+  <div id="grants"></div>
+</div>
+
+<script>
+const el = id => document.getElementById(id);
+function tbl(heads, rows){
+  let h = '<table><tr>'+heads.map(x=>`<th>${x}</th>`).join('')+'</tr>';
+  for(const r of rows){ h += '<tr>'+r.map(x=>`<td>${x??''}</td>`).join('')+'</tr>'; }
+  return h + '</table>';
+}
+function box(n,v){return `<div class="card"><div><b>${n}</b></div><div style="font-size:24px;margin-top:4px">${v}</div></div>`}
+
+async function api(path, method='GET', body=null){
+  const key = el('k').value.trim();
+  const opt = {method, headers:{'X-API-Key': key}};
+  if(body){ opt.headers['Content-Type']='application/json'; opt.body = JSON.stringify(body); }
+  const r = await fetch(path, opt);
+  if(!r.ok) throw new Error(`${r.status}`);
+  return r.json();
+}
+
+/* Stats */
+async function loadStats(){
+  try{
+    const q = new URLSearchParams();
+    if(el('df').value) q.set('date_from', el('df').value);
+    if(el('dt').value) q.set('date_to', el('dt').value);
+    if(el('ok').value) q.set('owner_keys', el('ok').value);
+    const j = await api('/v1/stats?'+q);
+    const t = j.totals || {};
+    el('meta').innerHTML = `range: <code>${j.range.from||''}</code> → <code>${j.range.to||''}</code>, owners: <code>${(j.filter.owners||[]).join(', ')}</code>`;
+    el('totals').innerHTML = [
+      box('Uploaded', t.uploaded||0), box('Unused', t.unused||0), box('Used total', t.used_total||0),
+      box('Locked', t.locked||0), box('Reg success', t.reg_success||0), box('Code 282', t.code_282||0),
+      box('Used pending', t.used_pending||0),
+    ].join('');
+    el('owners').innerHTML = tbl(['Owner','Uploaded','Unused','Used total','Locked','Reg success','Code 282','Used pending'],
+      (j.per_owner||[]).map(x=>[x.owner_key_id,x.uploaded,x.unused,x.used_total,x.locked,x.reg_success,x.code_282,x.used_pending]));
+    el('consumers').innerHTML = tbl(['Consumer Key','Used total'], (j.per_consumer||[]).map(x=>[x.used_by_key, x.total]));
+  }catch(e){ el('meta').innerHTML = `<span class="err">Error: ${e.message}</span>`; }
+}
+el('loadStats').addEventListener('click', loadStats);
+
+/* Keys */
+async function loadKeys(){
+  el('msg').textContent = '';
+  try{
+    const j = await api('/v1/admin/list_keys');
+    const heads = ['Key','Label','Active','Upload','Consume','RPM','Daily cap','Actions'];
+    const rows = [];
+    for(const k of j.keys){
+      rows.push([
+        `<code>${k.key_id}</code>`,
+        `<input data-k="${k.key_id}" data-f="label" value="${k.label??''}" style="width:130px">`,
+        `<input type="checkbox" data-k="${k.key_id}" data-f="active" ${k.active?'checked':''}>`,
+        `<input type="checkbox" data-k="${k.key_id}" data-f="can_upload" ${k.can_upload?'checked':''}>`,
+        `<input type="checkbox" data-k="${k.key_id}" data-f="can_consume" ${k.can_consume?'checked':''}>`,
+        `<input data-k="${k.key_id}" data-f="rpm_limit" type="number" value="${k.rpm_limit}" style="width:90px">`,
+        `<input data-k="${k.key_id}" data-f="daily_cap" type="number" value="${k.daily_cap}" style="width:100px">`,
+        `<button data-act="save" data-k="${k.key_id}">Save</button>
+         <button data-act="${k.active?'suspend':'activate'}" data-k="${k.key_id}">${k.active?'Suspend':'Activate'}</button>`
+      ]);
+    }
+    el('keys').innerHTML = tbl(heads, rows);
+    el('keys').addEventListener('click', async (e)=>{
+      const k = e.target.dataset.k;
+      if(!k) return;
+      try{
+        if(e.target.dataset.act==='save'){
+          const q = (f)=>el('keys').querySelector(`[data-k="${k}"][data-f="${f}"]`);
+          const body = {
+            key_id: k,
+            label: q('label').value,
+            active: q('active').checked ? 1 : 0,
+            can_upload: q('can_upload').checked ? 1 : 0,
+            can_consume: q('can_consume').checked ? 1 : 0,
+            rpm_limit: Number(q('rpm_limit').value||0),
+            daily_cap: Number(q('daily_cap').value||0),
+          };
+          await api('/v1/admin/update_key','POST', body);
+          el('msg').textContent = 'saved';
+        }else if(e.target.dataset.act==='suspend' || e.target.dataset.act==='activate'){
+          await api('/v1/admin/update_key','POST',{key_id:k, active: e.target.dataset.act==='activate' ? 1 : 0});
+          el('msg').textContent = e.target.dataset.act==='activate' ? 'activated' : 'suspended';
+          loadKeys();
+        }
+      }catch(err){ el('msg').textContent = 'err '+err.message; }
+    }, {once:true});
+  }catch(err){ el('msg').textContent='err '+err.message; }
+}
+el('loadKeys').addEventListener('click', loadKeys);
+
+/* Grants */
+async function loadGrants(){
+  el('gmsg').textContent='';
+  try{
+    const ks = await api('/v1/admin/list_keys');
+    const grants = await api('/v1/admin/list_grants');
+    const owners = ks.keys.map(k=>k.key_id).sort();
+    const consumers = ks.keys.map(k=>k.key_id).sort();
+
+    let h = '<table><tr><th>Consumer ↓ / Owner →</th>'+owners.map(o=>`<th>${o}</th>`).join('')+'</tr>';
+    const have = new Set(grants.grants.filter(g=>g.enabled).map(g=>g.consumer_key_id+'>'+g.owner_key_id));
+    for(const c of consumers){
+      h += `<tr><td><b>${c}</b></td>`;
+      for(const o of owners){
+        const id = `g_${c}>${o}`;
+        const checked = have.has(c+'>'+o) ? 'checked' : '';
+        h += `<td><input type="checkbox" id="${id}" ${checked} data-c="${c}" data-o="${o}"></td>`;
+      }
+      h += '</tr>';
+    }
+    h += '</table>';
+    el('grants').innerHTML = h;
+
+    el('grants').addEventListener('change', async (e)=>{
+      const c = e.target.dataset.c, o = e.target.dataset.o;
+      if(!c || !o) return;
+      try{
+        if(e.target.checked){
+          await api('/v1/admin/grant','POST',{consumer_key_id:c, owner_key_id:o, enabled:1});
+        }else{
+          await api('/v1/admin/revoke','POST',{consumer_key_id:c, owner_key_id:o});
+        }
+        el('gmsg').textContent='updated';
+      }catch(err){ el('gmsg').textContent='err '+err.message; }
+    }, {once:true});
+  }catch(err){ el('gmsg').textContent='err '+err.message; }
+}
+el('loadGrants').addEventListener('click', loadGrants);
+</script>

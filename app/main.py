@@ -1,0 +1,666 @@
+from fastapi import FastAPI, Header, HTTPException, Request, Query
+from fastapi.responses import HTMLResponse, FileResponse
+import os, json, time, asyncio
+import aiosqlite
+from passlib.hash import bcrypt
+from typing import Set, Dict, Any, List, Optional, Tuple
+
+app = FastAPI()
+
+@app.get("/healthz")
+async def health():
+    return {"ok": True}
+
+DB_PATH = os.getenv("DB_PATH", "/opt/account-api/db/accounts.sqlite")
+
+# safe sqlite context (no double-start)
+def db_ctx():
+    return aiosqlite.connect(DB_PATH)
+
+def parse_api_key(raw: str):
+    if not raw or "." not in raw:
+        raise HTTPException(401, "bad_api_key_format")
+    kid, secret = raw.split(".", 1)
+    if not kid or not secret:
+        raise HTTPException(401, "bad_api_key_format")
+    return kid, secret
+
+async def verify_key(conn, raw_key: str, must_upload=False, must_consume=False):
+    kid, secret = parse_api_key(raw_key)
+    row = await (await conn.execute("SELECT * FROM api_keys WHERE key_id=? AND active=1", (kid,))).fetchone()
+    if not row:
+        raise HTTPException(401, "key_not_found_or_inactive")
+    if not bcrypt.verify(secret, row["key_hash"]):
+        raise HTTPException(401, "bad_secret")
+    if must_upload and not row["can_upload"]:
+        raise HTTPException(403, "no_upload_perm")
+    if must_consume and not row["can_consume"]:
+        raise HTTPException(403, "no_consume_perm")
+    return dict(row)
+
+# ---------- UPLOAD ----------
+@app.post("/v1/upload")
+async def upload_accounts(request: Request, X_API_KEY: str = Header(..., alias="X-API-Key")):
+    body = await request.json()
+    async with db_ctx() as conn:
+        await conn.execute("PRAGMA journal_mode=WAL;")
+        await conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.row_factory = aiosqlite.Row
+
+        key = await verify_key(conn, X_API_KEY, must_upload=True)
+        owner = key["key_id"]
+
+        items = body if isinstance(body, list) else [body]
+        inserted = 0
+        dup = 0
+        for it in items:
+            e = it.get("e") or it.get("email")
+            p = it.get("p") or it.get("password")
+            rt = it.get("rt") or it.get("refresh_token")
+            cid = it.get("cid") or it.get("client_id")
+            meta = it.get("meta") or {}
+            if not (e and p and rt and cid):
+                continue
+            try:
+                await conn.execute(
+                    """INSERT INTO accounts
+                       (email,password,refresh_token,client_id,status,used_outcome,created_at,owner_key_id,meta_json)
+                       VALUES (?,?,?,?, 'unused', NULL, CURRENT_TIMESTAMP, ?, ?)""",
+                    (e, p, rt, cid, owner, json.dumps(meta))
+                )
+                inserted += 1
+            except aiosqlite.IntegrityError:
+                dup += 1
+
+        await conn.commit()
+        return {"ins": inserted, "dup": dup}
+
+# ---------- FETCH (atomic + ACL) ----------
+async def allowed_owner_keys(conn, consumer_kid: str) -> Set[str]:
+    owners = {consumer_kid}
+    async with conn.execute(
+        "SELECT owner_key_id FROM key_grants WHERE consumer_key_id=? AND enabled=1",
+        (consumer_kid,)
+    ) as cur:
+        async for r in cur:
+            owners.add(r["owner_key_id"])
+    return owners
+
+@app.post("/v1/fetch")
+async def fetch_one(request: Request, 
+    X_API_KEY: str = Header(..., alias="X-API-Key"),
+    owner_keys: Optional[str] = Query(None),
+    wait: int = Query(0, ge=0, le=30)
+):
+    async with db_ctx() as conn:
+        await conn.execute("PRAGMA journal_mode=WAL;")
+        await conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.row_factory = aiosqlite.Row
+
+        key = await verify_key(conn, X_API_KEY, must_consume=True)
+        consumer_kid = key["key_id"]
+
+        # rate-limits apply to fetch
+        await rate_check_fetch(conn, key)
+
+        allowed = await allowed_owner_keys(conn, consumer_kid)
+        if owner_keys:
+            asked = {s.strip() for s in owner_keys.split(",") if s.strip()}
+            allowed = allowed.intersection(asked)
+            if not allowed:
+                raise HTTPException(403, "no_acl_for_requested_owner_keys")
+
+        placeholders = ",".join(["?"] * len(allowed))
+        allowed_tuple = tuple(sorted(allowed))
+
+        async def try_claim():
+            sql = f"""
+                WITH pick AS (
+                    SELECT id FROM accounts
+                    WHERE status='unused' AND owner_key_id IN ({placeholders})
+                    ORDER BY created_at
+                    LIMIT 1
+                )
+                UPDATE accounts
+                SET status='used', used_by_key=?, used_at=CURRENT_TIMESTAMP
+                WHERE id IN (SELECT id FROM pick)
+                RETURNING id,email,password,refresh_token,client_id
+            """
+            async with conn.execute(sql, (*allowed_tuple, consumer_kid)) as cur:
+                row = await cur.fetchone()
+                if row:
+                    await conn.commit()
+                    return dict(row)
+                return None
+
+        got = await try_claim()
+        if got:
+            await log_ev(conn, "fetch_ok", consumer_kid, got["id"], request)
+            await conn.commit()
+            return {"id": got["id"], "e": got["email"], "p": got["password"], "rt": got["refresh_token"], "cid": got["client_id"]}
+
+        if wait > 0:
+            deadline = time.monotonic() + wait
+            while time.monotonic() < deadline:
+                await asyncio.sleep(0.5)
+                got = await try_claim()
+                if got:
+                    await log_ev(conn, "fetch_ok", consumer_kid, got["id"], request)
+            await conn.commit()
+            return {"id": got["id"], "e": got["email"], "p": got["password"], "rt": got["refresh_token"], "cid": got["client_id"]}
+
+        raise HTTPException(404, "no_unused_available")
+
+# --- same-key guard ---
+async def must_same_key(conn, caller_kid: str, account_id: int):
+    row = await (await conn.execute(
+        "SELECT id,status,used_by_key FROM accounts WHERE id=?", (account_id,)
+    )).fetchone()
+    if not row:
+        raise HTTPException(404, "account_not_found")
+    if row["status"] != "used":
+        raise HTTPException(409, "illegal_state_transition")
+    if row["used_by_key"] != caller_kid:
+        raise HTTPException(403, "wrong_key_for_account")
+    return dict(row)
+
+@app.post("/v1/mark_used_reg_success")
+async def mark_used_reg_success(payload: dict, X_API_KEY: str = Header(..., alias="X-API-Key")):
+    acc_id = payload.get("id")
+    if not acc_id:
+        raise HTTPException(400, "id_required")
+    async with db_ctx() as conn:
+        await conn.execute("PRAGMA journal_mode=WAL;")
+        await conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.row_factory = aiosqlite.Row
+
+        key = await verify_key(conn, X_API_KEY, must_consume=True)
+        kid = key["key_id"]
+        await must_same_key(conn, kid, acc_id)
+
+        await conn.execute("UPDATE accounts SET used_outcome='reg_success' WHERE id=?", (acc_id,))
+        await conn.commit()
+        return {"ok": True}
+
+@app.post("/v1/mark_used_282")
+async def mark_used_282(payload: dict, X_API_KEY: str = Header(..., alias="X-API-Key")):
+    acc_id = payload.get("id")
+    if not acc_id:
+        raise HTTPException(400, "id_required")
+    async with db_ctx() as conn:
+        await conn.execute("PRAGMA journal_mode=WAL;")
+        await conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.row_factory = aiosqlite.Row
+
+        key = await verify_key(conn, X_API_KEY, must_consume=True)
+        kid = key["key_id"]
+        await must_same_key(conn, kid, acc_id)
+
+        await conn.execute("UPDATE accounts SET used_outcome='code_282' WHERE id=?", (acc_id,))
+        await conn.commit()
+        return {"ok": True}
+
+@app.post("/v1/mark_locked")
+async def mark_locked(payload: dict, X_API_KEY: str = Header(..., alias="X-API-Key")):
+    acc_id = payload.get("id")
+    if not acc_id:
+        raise HTTPException(400, "id_required")
+    async with db_ctx() as conn:
+        await conn.execute("PRAGMA journal_mode=WAL;")
+        await conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.row_factory = aiosqlite.Row
+
+        key = await verify_key(conn, X_API_KEY, must_consume=True)
+        kid = key["key_id"]
+        await must_same_key(conn, kid, acc_id)
+
+        await conn.execute("UPDATE accounts SET status='locked', locked_at=CURRENT_TIMESTAMP, used_outcome=NULL WHERE id=?", (acc_id,))
+        await conn.commit()
+        return {"ok": True}
+
+@app.post("/v1/mark_used_282")
+async def mark_used_282(payload: dict, X_API_KEY: str = Header(..., alias="X-API-Key")):
+    acc_id = payload.get("id")
+    if not acc_id:
+        raise HTTPException(400, "id_required")
+    async with db_ctx() as conn:
+        await conn.execute("PRAGMA journal_mode=WAL;")
+        await conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.row_factory = aiosqlite.Row
+
+        key = await verify_key(conn, X_API_KEY, must_consume=True)
+        kid = key["key_id"]
+        await must_same_key(conn, kid, acc_id)
+
+        await conn.execute("UPDATE accounts SET used_outcome='code_282' WHERE id=?", (acc_id,))
+        await conn.commit()
+        return {"ok": True}
+
+@app.post("/v1/mark_locked")
+async def mark_locked(payload: dict, X_API_KEY: str = Header(..., alias="X-API-Key")):
+    acc_id = payload.get("id")
+    if not acc_id:
+        raise HTTPException(400, "id_required")
+    async with db_ctx() as conn:
+        await conn.execute("PRAGMA journal_mode=WAL;")
+        await conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.row_factory = aiosqlite.Row
+
+        key = await verify_key(conn, X_API_KEY, must_consume=True)
+        kid = key["key_id"]
+        await must_same_key(conn, kid, acc_id)
+
+        await conn.execute("UPDATE accounts SET status='locked', locked_at=CURRENT_TIMESTAMP, used_outcome=NULL WHERE id=?", (acc_id,))
+        await conn.commit()
+        return {"ok": True}
+
+from datetime import datetime
+from typing import List
+
+def _iso(d: str):
+    try:
+        return datetime.strptime(d, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except:
+        raise HTTPException(400, "bad_date_format_use_YYYY-MM-DD")
+
+@app.get("/v1/stats")
+async def stats(
+    X_API_KEY: str = Header(..., alias="X-API-Key"),
+    date_from: str | None = None,
+    date_to: str | None = None,
+    owner_keys: str | None = None,       # comma sep
+    consumer_keys: str | None = None     # comma sep
+):
+    async with db_ctx() as conn:
+        await conn.execute("PRAGMA journal_mode=WAL;")
+        await conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.row_factory = aiosqlite.Row
+
+        # any valid key can view stats for owners it has ACL to (plus itself)
+        key = await verify_key(conn, X_API_KEY, must_consume=True)
+        viewer = key["key_id"]
+        allowed = await allowed_owner_keys(conn, viewer)
+        if viewer in ADMIN_KEYS:
+            rows = await (await conn.execute("SELECT DISTINCT owner_key_id FROM accounts")).fetchall()
+            allowed = {r[0] for r in rows} if rows else set()
+            allowed.add(viewer)
+        if viewer in ADMIN_KEYS:
+            rows = await (await conn.execute("SELECT DISTINCT owner_key_id FROM accounts")).fetchall()
+            allowed = {r[0] for r in rows} if rows else set()
+            allowed.add(viewer)
+
+        # parse filters
+        where = []
+        params: list = []
+
+        if date_from:
+            df = _iso(date_from)
+            where.append("date(created_at) >= ?")
+            params.append(df)
+        if date_to:
+            dt = _iso(date_to)
+            where.append("date(created_at) <= ?")
+            params.append(dt)
+
+        # owner filter (intersection with ACL)
+        if owner_keys:
+            asked = {s.strip() for s in owner_keys.split(",") if s.strip()}
+            owners = sorted(asked.intersection(allowed))
+        else:
+            owners = sorted(allowed)
+        if not owners:
+            raise HTTPException(403, "no_acl_for_requested_owner_keys")
+        where.append(f"owner_key_id IN ({','.join(['?']*len(owners))})")
+        params.extend(owners)
+
+        # consumer filter
+        if consumer_keys:
+            cset = [s.strip() for s in consumer_keys.split(",") if s.strip()]
+            where.append(f"used_by_key IN ({','.join(['?']*len(cset))})")
+            params.extend(cset)
+
+        _where = ("WHERE " + " AND ".join(where)) if where else ""
+
+        async def one(sql, p=params):
+            row = await (await conn.execute(sql, p)).fetchone()
+            return row[0] if row and row[0] is not None else 0
+
+        uploaded = await one(f"SELECT COUNT(*) FROM accounts {_where}")
+        unused   = await one(f"SELECT COUNT(*) FROM accounts {_where} AND status='unused'")
+        locked   = await one(f"SELECT COUNT(*) FROM accounts {_where} AND status='locked'")
+        used_all = await one(f"SELECT COUNT(*) FROM accounts {_where} AND status IN ('used','locked')")
+        reg_ok   = await one(f"SELECT COUNT(*) FROM accounts {_where} AND status='used' AND used_outcome='reg_success'")
+        c282     = await one(f"SELECT COUNT(*) FROM accounts {_where} AND status='used' AND used_outcome='code_282'")
+        used_pending = await one(f"SELECT COUNT(*) FROM accounts {_where} AND status='used' AND used_outcome IS NULL")
+
+        # per-owner breakdown
+        owners_sql = f"""
+          SELECT owner_key_id,
+                 COUNT(*) as uploaded,
+                 SUM(status='unused') as unused,
+                 SUM(status IN ('used','locked')) as used_total,
+                 SUM(status='locked') as locked,
+                 SUM(status='used' AND used_outcome='reg_success') as reg_success,
+                 SUM(status='used' AND used_outcome='code_282') as code_282,
+                 SUM(status='used' AND used_outcome IS NULL) as used_pending
+          FROM accounts {_where}
+          GROUP BY owner_key_id
+          ORDER BY owner_key_id
+        """
+        per_owner = []
+        async with conn.execute(owners_sql, params) as cur:
+            async for r in cur:
+                per_owner.append(dict(r))
+
+        # per-consumer breakdown (only rows that were used/locked)
+        consumers_sql = f"""
+          SELECT COALESCE(used_by_key,'') as used_by_key,
+                 COUNT(*) as total
+          FROM accounts {_where} AND status IN ('used','locked')
+          GROUP BY used_by_key
+          ORDER BY used_by_key
+        """
+        per_consumer = []
+        async with conn.execute(consumers_sql, params) as cur:
+            async for r in cur:
+                per_consumer.append(dict(r))
+
+        return {
+            "range": {"from": date_from, "to": date_to},
+            "filter": {"owners": owners, "consumer_keys": consumer_keys},
+            "totals": {
+                "uploaded": uploaded,
+                "unused": unused,
+                "used_total": used_all,
+                "locked": locked,
+                "reg_success": reg_ok,
+                "code_282": c282,
+                "used_pending": used_pending
+            },
+            "per_owner": per_owner,
+            "per_consumer": per_consumer
+        }
+
+# ------- TTL auto-release (default 600s) -------
+TTL_SECS = int(os.getenv("TTL_SECS", "600"))
+
+async def _reaper_once():
+    cutoff = f"-{TTL_SECS} seconds"
+    async with db_ctx() as conn:
+        await conn.execute("PRAGMA journal_mode=WAL;")
+        await conn.execute("PRAGMA synchronous=NORMAL;")
+        # release: used & no outcome & older than TTL
+        await conn.execute("""
+            UPDATE accounts
+            SET status='unused', used_by_key=NULL, used_at=NULL
+            WHERE status='used'
+              AND used_outcome IS NULL
+              AND used_at < datetime('now', ?)
+        """, (cutoff,))
+        await conn.commit()
+
+async def _reaper_loop():
+    # run every 30s
+    while True:
+        try:
+            await _reaper_once()
+        except Exception:
+            pass
+        await asyncio.sleep(30)
+
+@app.on_event("startup")
+async def _start_reaper():
+    asyncio.create_task(_reaper_loop())
+
+# ---------- rate limits + events ----------
+async def log_ev(conn, event: str, key_id: str, account_id: int | None, request, meta: dict | None = None):
+    ip = getattr(getattr(request, "client", None), "host", None)
+    ua = request.headers.get("user-agent") if hasattr(request, "headers") else None
+    await conn.execute(
+        "INSERT INTO events(event,key_id,account_id,ip,ua,meta_json) VALUES(?,?,?,?,?,?)",
+        (event, key_id, account_id, ip, ua, json.dumps(meta or {}))
+    )
+
+async def rate_check_fetch(conn, key_row: dict):
+    kid = key_row["key_id"]
+    rpm = key_row.get("rpm_limit", 60)
+    cap = key_row.get("daily_cap", 5000)
+
+    # RPM over last 60s (only successful fetches)
+    rpm_q = "SELECT COUNT(*) FROM events WHERE key_id=? AND event='fetch_ok' AND ts >= datetime('now','-60 seconds')"
+    rpm_used = (await (await conn.execute(rpm_q, (kid,))).fetchone())[0]
+    if rpm_used >= rpm:
+        raise HTTPException(429, "rpm_limit")
+
+    # Daily cap (UTC day; only successful fetches)
+    day_q = "SELECT COUNT(*) FROM events WHERE key_id=? AND event='fetch_ok' AND date(ts)=date('now')"
+    day_used = (await (await conn.execute(day_q, (kid,))).fetchone())[0]
+    if day_used >= cap:
+        raise HTTPException(429, "daily_cap")
+
+@app.get("/v1/keys/me")
+async def key_me(X_API_KEY: str = Header(..., alias="X-API-Key")):
+    async with db_ctx() as conn:
+        await conn.execute("PRAGMA journal_mode=WAL;")
+        await conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.row_factory = aiosqlite.Row
+
+        # verify (upload-only keys ko bhi allow)
+        kid, secret = parse_api_key(X_API_KEY)
+        row = await (await conn.execute("SELECT * FROM api_keys WHERE key_id=? AND active=1", (kid,))).fetchone()
+        if not row or not bcrypt.verify(secret, row["key_hash"]):
+            raise HTTPException(401, "bad_key")
+        d = dict(row)
+
+        # usage
+        rpm_used = (await (await conn.execute(
+            "SELECT COUNT(*) FROM events WHERE key_id=? AND event='fetch_ok' AND ts>=datetime('now','-60 seconds')", (kid,)
+        )).fetchone())[0]
+        day_used = (await (await conn.execute(
+            "SELECT COUNT(*) FROM events WHERE key_id=? AND event='fetch_ok' AND date(ts)=date('now')", (kid,)
+        )).fetchone())[0]
+
+        return {
+            "key_id": kid,
+            "label": d.get("label"),
+            "active": d.get("active"),
+            "can_upload": d.get("can_upload"),
+            "can_consume": d.get("can_consume"),
+            "rpm_limit": d.get("rpm_limit"),
+            "daily_cap": d.get("daily_cap"),
+            "usage": {"rpm_current": rpm_used, "today_fetches": day_used}
+        }
+ADMIN_KEYS = {k.strip() for k in os.getenv("ADMIN_KEYS","").split(",") if k.strip()}
+
+def require_admin(kid: str):
+    if kid not in ADMIN_KEYS:
+        raise HTTPException(403, "admin_only")
+
+@app.post("/v1/admin/update_key")
+async def admin_update_key(payload: dict, X_API_KEY: str = Header(..., alias="X-API-Key")):
+    # auth
+    akid, asec = parse_api_key(X_API_KEY)
+    async with db_ctx() as conn:
+        conn.row_factory = aiosqlite.Row
+        arow = await (await conn.execute("SELECT key_hash FROM api_keys WHERE key_id=? AND active=1",(akid,))).fetchone()
+        if not arow or not bcrypt.verify(asec, arow["key_hash"]):
+            raise HTTPException(401, "bad_admin_key")
+        require_admin(akid)
+        # payload: {key_id, active?, can_upload?, can_consume?, daily_cap?, rpm_limit?}
+        key_id = payload.get("key_id")
+        if not key_id: raise HTTPException(400, "key_id_required")
+        fields = []
+        args = []
+        for col in ("active","can_upload","can_consume","daily_cap","rpm_limit","label"):
+            if col in payload:
+                fields.append(f"{col}=?")
+                args.append(payload[col])
+        if not fields:
+            return {"ok": True, "note":"no_changes"}
+        args.extend([key_id])
+        await conn.execute(f"UPDATE api_keys SET {', '.join(fields)} WHERE key_id=?", tuple(args))
+        await conn.commit()
+        return {"ok": True}
+
+@app.post("/v1/admin/grant")
+async def admin_grant(payload: dict, X_API_KEY: str = Header(..., alias="X-API-Key")):
+    akid, asec = parse_api_key(X_API_KEY)
+    async with db_ctx() as conn:
+        conn.row_factory = aiosqlite.Row
+        arow = await (await conn.execute("SELECT key_hash FROM api_keys WHERE key_id=? AND active=1",(akid,))).fetchone()
+        if not arow or not bcrypt.verify(asec, arow["key_hash"]):
+            raise HTTPException(401, "bad_admin_key")
+        require_admin(akid)
+        c = payload.get("consumer_key_id"); o = payload.get("owner_key_id"); en = int(payload.get("enabled",1))
+        if not (c and o): raise HTTPException(400, "consumer_key_id_and_owner_key_id_required")
+        await conn.execute("INSERT OR REPLACE INTO key_grants(consumer_key_id,owner_key_id,enabled,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)",
+                           (c,o,en))
+        await conn.commit()
+        return {"ok": True}
+
+@app.post("/v1/admin/revoke")
+async def admin_revoke(payload: dict, X_API_KEY: str = Header(..., alias="X-API-Key")):
+    akid, asec = parse_api_key(X_API_KEY)
+    async with db_ctx() as conn:
+        conn.row_factory = aiosqlite.Row
+        arow = await (await conn.execute("SELECT key_hash FROM api_keys WHERE key_id=? AND active=1",(akid,))).fetchone()
+        if not arow or not bcrypt.verify(asec, arow["key_hash"]):
+            raise HTTPException(401, "bad_admin_key")
+        require_admin(akid)
+        c = payload.get("consumer_key_id"); o = payload.get("owner_key_id")
+        if not (c and o): raise HTTPException(400, "consumer_key_id_and_owner_key_id_required")
+        await conn.execute("UPDATE key_grants SET enabled=0 WHERE consumer_key_id=? AND owner_key_id=?", (c,o))
+        await conn.commit()
+        return {"ok": True}
+
+@app.get("/v1/admin/list_keys")
+async def admin_list_keys(X_API_KEY: str = Header(..., alias="X-API-Key")):
+    akid, asec = parse_api_key(X_API_KEY)
+    async with db_ctx() as conn:
+        conn.row_factory = aiosqlite.Row
+        arow = await (await conn.execute("SELECT key_hash FROM api_keys WHERE key_id=? AND active=1",(akid,))).fetchone()
+        if not arow or not bcrypt.verify(asec, arow["key_hash"]):
+            raise HTTPException(401, "bad_admin_key")
+        require_admin(akid)
+        out = []
+        async with conn.execute("SELECT key_id,label,active,can_upload,can_consume,daily_cap,rpm_limit,created_at FROM api_keys ORDER BY key_id") as cur:
+            async for r in cur:
+                out.append(dict(r))
+        return {"keys": out}
+from fastapi.responses import HTMLResponse, FileResponse
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_ui():
+    return """
+<!doctype html>
+<meta charset="utf-8">
+<title>Accounts Dashboard</title>
+<style>
+  body{font-family:system-ui,Segoe UI,Roboto,Arial;margin:24px;max-width:1100px}
+  h1{font-size:20px;margin:0 0 12px}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin-bottom:12px}
+  label{font-size:12px;color:#444;display:block;margin-bottom:4px}
+  input,button{padding:8px 10px;font-size:14px}
+  .card{border:1px solid #e5e7eb;border-radius:10px;padding:14px;margin:10px 0}
+  table{border-collapse:collapse;width:100%;margin-top:8px}
+  th,td{border:1px solid #e5e7eb;padding:8px;text-align:left}
+  th{background:#f9fafb}
+  code{background:#f3f4f6;padding:2px 4px;border-radius:6px}
+</style>
+<h1>Accounts Dashboard</h1>
+
+<div class="card">
+  <div class="row">
+    <div><label>Admin API Key</label><input id="k" type="password" placeholder="admin.<secret>" style="width:320px"></div>
+    <div><label>From (YYYY-MM-DD)</label><input id="df" type="text" placeholder="2025-09-01"></div>
+    <div><label>To (YYYY-MM-DD)</label><input id="dt" type="text" placeholder="2025-09-12"></div>
+    <div><label>Owner Keys (optional)</label><input id="ok" type="text" placeholder="sanjay,rahul,shoib"></div>
+    <div><button id="go">Load</button></div>
+  </div>
+  <div id="meta" style="font-size:12px;color:#666"></div>
+  <div class="row" id="totals"></div>
+  <div class="card">
+    <b>Per Owner</b>
+    <div id="owners"></div>
+  </div>
+  <div class="card">
+    <b>Per Consumer</b>
+    <div id="consumers"></div>
+  </div>
+</div>
+
+<script>
+const el = id => document.getElementById(id);
+function box(n, v){return `<div class="card"><div><b>${n}</b></div><div style="font-size:24px;margin-top:4px">${v}</div></div>`}
+function tbl(heads, rows){
+  let h = '<table><tr>'+heads.map(x=>`<th>${x}</th>`).join('')+'</tr>';
+  for(const r of rows){ h += '<tr>'+r.map(x=>`<td>${x??''}</td>`).join('')+'</tr>'; }
+  return h + '</table>';
+}
+async function load(){
+  const key = el('k').value.trim();
+  const q = new URLSearchParams();
+  if(el('df').value) q.set('date_from', el('df').value);
+  if(el('dt').value) q.set('date_to', el('dt').value);
+  if(el('ok').value) q.set('owner_keys', el('ok').value);
+  const res = await fetch('/v1/stats?'+q, {headers:{'X-API-Key': key}});
+  if(!res.ok){ el('meta').innerText = 'Error: '+res.status; return; }
+  const j = await res.json();
+  const t = j.totals || {};
+  el('meta').innerHTML = `range: <code>${j.range.from||''}</code> → <code>${j.range.to||''}</code>, owners: <code>${(j.filter.owners||[]).join(', ')}</code>`;
+  el('totals').innerHTML = [
+    box('Uploaded', t.uploaded||0),
+    box('Unused', t.unused||0),
+    box('Used total', t.used_total||0),
+    box('Locked', t.locked||0),
+    box('Reg success', t.reg_success||0),
+    box('Code 282', t.code_282||0),
+    box('Used pending', t.used_pending||0),
+  ].join('');
+  el('owners').innerHTML = tbl(
+    ['Owner','Uploaded','Unused','Used total','Locked','Reg success','Code 282','Used pending'],
+    (j.per_owner||[]).map(x=>[x.owner_key_id,x.uploaded,x.unused,x.used_total,x.locked,x.reg_success,x.code_282,x.used_pending])
+  );
+  el('consumers').innerHTML = tbl(
+    ['Consumer Key','Used total'],
+    (j.per_consumer||[]).map(x=>[x.used_by_key, x.total])
+  );
+}
+el('go').addEventListener('click', load);
+</script>
+    """
+
+@app.get("/v1/admin/list_grants")
+async def admin_list_grants(X_API_KEY: str = Header(..., alias="X-API-Key")):
+    akid, asec = parse_api_key(X_API_KEY)
+    async with db_ctx() as conn:
+        conn.row_factory = aiosqlite.Row
+        arow = await (await conn.execute(
+            "SELECT key_hash FROM api_keys WHERE key_id=? AND active=1",(akid,)
+        )).fetchone()
+        if not arow or not bcrypt.verify(asec, arow["key_hash"]):
+            raise HTTPException(401, "bad_admin_key")
+        require_admin(akid)
+
+        rows = []
+        async with conn.execute(
+          "SELECT consumer_key_id, owner_key_id, enabled, created_at FROM key_grants ORDER BY consumer_key_id, owner_key_id"
+        ) as cur:
+            async for r in cur:
+                rows.append(dict(r))
+        return {"grants": rows}
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_ui_fallback():
+    with open("/opt/account-api/app/admin.html", "r", encoding="utf-8") as f:
+        return f.read()
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_ui_fallback():
+    with open("/opt/account-api/app/admin.html", "r", encoding="utf-8") as f:
+        return f.read()
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_ui_fallback():
+    with open("/opt/account-api/app/admin.html", "r", encoding="utf-8") as f:
+        return f.read()
