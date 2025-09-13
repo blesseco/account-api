@@ -549,7 +549,7 @@ async def admin_list_keys(X_API_KEY: str = Header(..., alias="X-API-Key")):
         return {"keys": out}
 from fastapi.responses import HTMLResponse, FileResponse
 
-@app.get("/admin", response_class=HTMLResponse)
+@app.get("/admin_old", response_class=HTMLResponse)
 async def admin_ui():
     return """
 <!doctype html>
@@ -650,17 +650,191 @@ async def admin_list_grants(X_API_KEY: str = Header(..., alias="X-API-Key")):
                 rows.append(dict(r))
         return {"grants": rows}
 
-@app.get("/admin", response_class=HTMLResponse)
+@app.get("/admin_old", response_class=HTMLResponse)
 async def admin_ui_fallback():
     with open("/opt/account-api/app/admin.html", "r", encoding="utf-8") as f:
         return f.read()
 
-@app.get("/admin", response_class=HTMLResponse)
+@app.get("/admin_old", response_class=HTMLResponse)
 async def admin_ui_fallback():
     with open("/opt/account-api/app/admin.html", "r", encoding="utf-8") as f:
         return f.read()
 
-@app.get("/admin", response_class=HTMLResponse)
+@app.get("/admin_old", response_class=HTMLResponse)
 async def admin_ui_fallback():
     with open("/opt/account-api/app/admin.html", "r", encoding="utf-8") as f:
         return f.read()
+# --- Admin: list grants (for dashboard) ---
+@app.get("/v1/admin/list_grants")
+async def admin_list_grants(X_API_KEY: str = Header(..., alias="X-API-Key")):
+    akid, asec = parse_api_key(X_API_KEY)
+    async with db_ctx() as conn:
+        conn.row_factory = aiosqlite.Row
+        arow = await (await conn.execute(
+            "SELECT key_hash FROM api_keys WHERE key_id=? AND active=1", (akid,)
+        )).fetchone()
+        if not arow or not bcrypt.verify(asec, arow["key_hash"]):
+            raise HTTPException(401, "bad_admin_key")
+        require_admin(akid)
+
+        out = []
+        async with conn.execute(
+            "SELECT consumer_key_id, owner_key_id, enabled, created_at FROM key_grants"
+        ) as cur:
+            async for r in cur:
+                out.append(dict(r))
+        return {"grants": out}
+from fastapi.responses import HTMLResponse, FileResponse
+
+@app.get("/admin_old", response_class=HTMLResponse)
+async def admin_ui():
+    return FileResponse("/opt/account-api/app/admin.html")
+# --- Admin extras: create/regen/list_grants + user info (/v1/me) ---
+
+import random, string
+
+def _gen_secret(n: int = 40) -> str:
+    return "".join(random.choices(string.ascii_letters + string.digits, k=n))
+
+async def _require_admin(conn, X_API_KEY: str) -> str:
+    akid, asec = parse_api_key(X_API_KEY)
+    row = await (await conn.execute(
+        "SELECT key_hash FROM api_keys WHERE key_id=? AND active=1", (akid,)
+    )).fetchone()
+    if not row or not bcrypt.verify(asec, row["key_hash"]):
+        raise HTTPException(401, "bad_admin_key")
+    if akid not in ADMIN_KEYS:
+        raise HTTPException(403, "admin_only")
+    return akid
+
+@app.get("/v1/admin/list_grants")
+async def admin_list_grants(X_API_KEY: str = Header(..., alias="X-API-Key")):
+    async with db_ctx() as conn:
+        conn.row_factory = aiosqlite.Row
+        await _require_admin(conn, X_API_KEY)
+        out = []
+        async with conn.execute(
+            "SELECT consumer_key_id, owner_key_id, enabled, created_at "
+            "FROM key_grants ORDER BY consumer_key_id, owner_key_id"
+        ) as cur:
+            async for r in cur:
+                out.append(dict(r))
+        return {"grants": out}
+
+@app.post("/v1/admin/create_key")
+async def admin_create_key(payload: dict, X_API_KEY: str = Header(..., alias="X-API-Key")):
+    async with db_ctx() as conn:
+        conn.row_factory = aiosqlite.Row
+        await _require_admin(conn, X_API_KEY)
+        kid = payload.get("key_id")
+        if not kid:
+            raise HTTPException(400, "key_id_required")
+        label = payload.get("label") or kid
+        secret = _gen_secret()
+        khash = bcrypt.hash(secret)
+        await conn.execute("""
+            INSERT INTO api_keys(key_id,key_hash,label,can_upload,can_consume,active,daily_cap,rpm_limit)
+            VALUES(?,?,?,?,?,?,?,?)
+            ON CONFLICT(key_id) DO UPDATE SET
+              key_hash=excluded.key_hash,label=excluded.label,can_upload=excluded.can_upload,
+              can_consume=excluded.can_consume,active=excluded.active,
+              daily_cap=excluded.daily_cap,rpm_limit=excluded.rpm_limit
+        """, (kid, khash, label,
+              int(payload.get("can_upload",1)),
+              int(payload.get("can_consume",1)),
+              int(payload.get("active",1)),
+              int(payload.get("daily_cap",5000)),
+              int(payload.get("rpm_limit",60))))
+        await conn.commit()
+        return {"ok": True, "api_key": f"{kid}.{secret}"}
+
+@app.post("/v1/admin/regen_secret")
+async def admin_regen_secret(payload: dict, X_API_KEY: str = Header(..., alias="X-API-Key")):
+    async with db_ctx() as conn:
+        conn.row_factory = aiosqlite.Row
+        await _require_admin(conn, X_API_KEY)
+        kid = payload.get("key_id")
+        if not kid:
+            raise HTTPException(400, "key_id_required")
+        secret = _gen_secret()
+        khash = bcrypt.hash(secret)
+        await conn.execute("UPDATE api_keys SET key_hash=? WHERE key_id=?", (khash, kid))
+        await conn.commit()
+        return {"ok": True, "api_key": f"{kid}.{secret}"}
+
+@app.get("/v1/me")
+async def me(X_API_KEY: str = Header(..., alias="X-API-Key")):
+    kid, sec = parse_api_key(X_API_KEY)
+    async with db_ctx() as conn:
+        conn.row_factory = aiosqlite.Row
+        row = await (await conn.execute(
+            "SELECT label, can_upload, can_consume, active, daily_cap, rpm_limit, key_hash "
+            "FROM api_keys WHERE key_id=?", (kid,)
+        )).fetchone()
+        if not row or not row["active"] or not bcrypt.verify(sec, row["key_hash"]):
+            raise HTTPException(401, "bad_key")
+
+        # allowed owners for this consumer
+        owners = set([kid])
+        async with conn.execute(
+            "SELECT owner_key_id FROM key_grants WHERE consumer_key_id=? AND enabled=1", (kid,)
+        ) as cur:
+            async for r in cur:
+                owners.add(r["owner_key_id"])
+
+        # simple usage metrics (today)
+        today = time.strftime("%Y-%m-%d")
+        c = await (await conn.execute(
+            "SELECT COUNT(*) AS c FROM events WHERE event=fetch AND substr(ts,1,10)=? AND key_id=?",
+            (today, kid)
+        )).fetchone()
+
+        return {
+            "key_id": kid,
+            "label": row["label"],
+            "active": row["active"],
+            "can_upload": row["can_upload"],
+            "can_consume": row["can_consume"],
+            "daily_cap": row["daily_cap"],
+            "rpm_limit": row["rpm_limit"],
+            "owners_allowed": sorted(owners),
+            "usage": {"rpm_current": 0, "today_fetches": c["c"]},
+        }
+
+# Serve a simple user view (read-only)
+from fastapi.responses import HTMLResponse
+@app.get("/user", response_class=HTMLResponse)
+async def user_ui():
+    with open("/opt/account-api/app/user.html", "r", encoding="utf-8") as f:
+        return f.read()
+
+# ---- serve user UI ----
+from fastapi.responses import HTMLResponse, FileResponse  # (already hona chahiye)
+from fastapi import HTTPException
+
+@app.get("/user", response_class=HTMLResponse)
+async def user_ui():
+    raise HTTPException(status_code=404, detail="user_ui_disabled")
+    try:
+        return FileResponse(path)
+    except FileNotFoundError:
+        raise HTTPException(404, "user_ui_missing")
+    except Exception as e:
+        raise HTTPException(500, f"user_ui_error: {e}")
+# /opt/account-api/app/main.py  (kisi bhi jgah routes ke baad)
+from fastapi import HTTPException
+
+@app.get("/user")
+async def user_ui_disabled():
+    raise HTTPException(404, "user_ui_disabled")
+
+# --- canonical, no-cache admin UI route (forces file) ---
+from fastapi.responses import FileResponse
+from starlette.responses import Response as StarletteResponse  # type only
+
+@app.get("/admin")
+async def admin_ui_latest() -> StarletteResponse:
+    path = "/opt/account-api/app/admin.html"
+    # hard no-cache so purana cache kabhi na aaye
+    headers = {"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0"}
+    return FileResponse(path, media_type="text/html; charset=utf-8", headers=headers)

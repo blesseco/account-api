@@ -1,431 +1,314 @@
 <!doctype html>
 <meta charset="utf-8" />
-<title>Accounts Dashboard</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<script src="https://cdn.tailwindcss.com"></script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Accounts Admin</title>
 <style>
-  html,body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,"Apple Color Emoji","Segoe UI Emoji"}
-  .tab-btn[aria-selected="true"]{border-bottom:2px solid #111827;color:#111827}
-  .badge{border-radius:.5rem;padding:.2rem .45rem;font-size:.75rem}
-  .badge.green{background:#DCFCE7;color:#166534}
-  .badge.gray{background:#F3F4F6;color:#374151}
-  .badge.red{background:#FEE2E2;color:#991B1B}
-  .badge.amber{background:#FEF3C7;color:#92400E}
-  .badge.blue{background:#DBEAFE;color:#1E3A8A}
-  .btn{border:1px solid #E5E7EB;border-radius:.7rem;padding:.55rem .8rem;font-weight:600}
-  .btn:hover{background:#F3F4F6}
-  .btn.primary{background:#111827;color:#fff;border-color:#111827}
-  .btn.primary:hover{background:#000}
-  .card{border:1px solid #E5E7EB;border-radius:1rem;padding:1rem;background:#fff}
-  .input{border:1px solid #E5E7EB;border-radius:.6rem;padding:.55rem .7rem;width:100%}
-  .switch{position:relative;display:inline-block;width:40px;height:22px}
-  .switch input{opacity:0;width:0;height:0}
-  .slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#e5e7eb;transition:.2s;border-radius:34px}
-  .slider:before{position:absolute;content:"";height:18px;width:18px;left:2px;bottom:2px;background:white;transition:.2s;border-radius:50%}
-  input:checked + .slider{background:#111827}
-  input:checked + .slider:before{transform:translateX(18px)}
+  :root{--bg:#0f172a;--panel:#111827;--card:#0b1220;--line:#1f2937;--text:#e5e7eb;--muted:#94a3b8;--input:#0b1220;--brand:#60a5fa;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--accent:#3b82f6}
+  .light{--bg:#f7f8fb;--panel:#ffffff;--card:#ffffff;--line:#d4d7de;--text:#0b1320;--muted:#5b6b86;--input:#ffffff;--brand:#2563eb;--ok:#16a34a;--warn:#d97706;--bad:#dc2626;--accent:#1d4ed8}
+  html,body{background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial}
+  .wrap{max-width:1200px;margin:26px auto;padding:0 16px}
+  h1{font-size:24px;margin:0 0 18px;display:flex;gap:12px;align-items:center}
+  .muted{color:var(--muted)} .pill{font-size:12px;padding:3px 8px;border-radius:999px;border:1px solid var(--line)}
+  .pill.ok{background:color-mix(in oklab,var(--ok) 18%, transparent);border-color:var(--ok)}
+  .pill.bad{background:color-mix(in oklab,var(--bad) 18%, transparent);border-color:var(--bad)}
+  .row{display:flex;gap:12px;flex-wrap:wrap} .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .controls .row > div{flex:1 1 240px}
+  label{display:block;margin:0 0 6px;color:var(--muted);font-weight:600}
+  input[type=text],input[type=date],input[type=number],input[type=password]{width:100%;background:var(--input);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px 12px;outline:none}
+  input:focus{border-color:var(--brand)}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--text);cursor:pointer}
+  .btn.brand{background:var(--accent);border-color:var(--accent);color:#fff} .btn.ok{background:var(--ok);border-color:var(--ok);color:#fff}
+  .btn.warn{background:var(--warn);border-color:var(--warn);color:#fff} .btn.bad{background:var(--bad);border-color:var(--bad);color:#fff}
+  .grid{display:grid;grid-template-columns:repeat(6,1fr);gap:12px} .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .k{font-size:12px;color:var(--muted)} .v{font-size:22px;font-weight:700;margin-top:6px}
+  .table{width:100%;border-collapse:separate;border-spacing:0} .table th,.table td{border-bottom:1px solid var(--line);padding:10px 8px;text-align:left}
+  .table th{font-weight:700;color:var(--muted)} .right{display:flex;gap:8px;justify-content:flex-end}
+  .section{margin-top:16px} .section h3{margin:2px 0 10px;font-size:16px}
+  .tag{display:inline-block;background:var(--card);border:1px solid var(--line);color:var(--muted);padding:2px 8px;border-radius:999px;margin-left:8px;font-size:12px}
+  .theme-toggle{margin-left:auto} .mono{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace}
+  .tip{font-size:12px;color:var(--muted);margin-top:6px} .toast{position:fixed;right:16px;bottom:16px;background:var(--panel);border:1px solid var(--line);padding:10px 14px;border-radius:10px;min-width:240px;display:none}
 </style>
-<body class="bg-gray-50">
-  <div class="max-w-7xl mx-auto px-4 py-6">
-    <header class="flex items-center gap-4 mb-6">
-      <h1 class="text-2xl font-bold tracking-tight">Accounts Dashboard</h1>
-      <span id="envTag" class="badge gray">live</span>
-      <div class="ml-auto flex items-center gap-2">
-        <input id="apiKey" class="input w-80" placeholder="Paste Admin X-API-Key: admin.<SECRET>" />
-        <button class="btn" onclick="saveKey()">Save</button>
-        <span id="authState" class="text-sm text-gray-500"></span>
-      </div>
-    </header>
 
-    <nav class="flex gap-6 border-b border-gray-200 mb-6">
-      <button class="tab-btn py-2 -mb-px text-gray-500" aria-selected="true" onclick="showTab('overview', this)">Overview</button>
-      <button class="tab-btn py-2 -mb-px text-gray-500" onclick="showTab('keys', this)">Keys</button>
-      <button class="tab-btn py-2 -mb-px text-gray-500" onclick="showTab('grants', this)">Grants</button>
-      <button class="tab-btn py-2 -mb-px text-gray-500" onclick="showTab('stats', this)">Stats</button>
-    </nav>
+<div class="wrap">
+  <h1>Accounts Admin <span id="authBadge" class="pill bad">Auth: failed</span>
+    <button id="themeBtn" class="btn theme-toggle">Theme</button>
+  </h1>
 
-    <!-- Overview -->
-    <section id="tab-overview">
-      <div class="flex items-center justify-end mb-2 gap-3">
-        <label class="flex items-center gap-2 text-sm text-gray-600">
-          <input id="autoRefresh" type="checkbox" onchange="toggleAutoRefresh(this.checked)"> Auto refresh
-        </label>
-        <span id="lastRef" class="text-xs text-gray-400"></span>
-      </div>
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-      <div class="card">
-        <div class="text-sm text-gray-500">Uploaded (range)</div>
-        <div id="kUploaded" class="text-2xl font-semibold">–</div>
-      </div>
-      <div class="card">
-        <div class="text-sm text-gray-500">Used</div>
-        <div id="kUsed" class="text-2xl font-semibold">–</div>
-      </div>
-      <div class="card">
-        <div class="text-sm text-gray-500">Locked</div>
-        <div id="kLocked" class="text-2xl font-semibold">–</div>
-      </div>
-      <div class="card">
-        <div class="text-sm text-gray-500">Reg Success / 282</div>
-        <div class="text-2xl font-semibold"><span id="kReg">–</span> / <span id="k282">–</span></div>
-      </div>
-    </section>
-
-    <!-- Keys -->
-    <section id="tab-keys" class="hidden">
-      <div class="card">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="font-semibold">API Keys</h2>
-          <div class="flex gap-2">
-            <button class="btn" onclick="createKeyPrompt()">+ New Key</button>
-            <button class="btn" onclick="loadKeys()">Refresh</button>
-          </div>
+  <div class="panel controls">
+    <div class="row">
+      <div>
+        <label>Admin API Key</label>
+        <div class="row">
+          <input id="adminKey" type="text" placeholder="admin.<secret>" class="mono" />
+          <button id="saveKeyBtn" class="btn">Save</button>
+          <button id="loadStatsBtn" class="btn brand">Load</button>
         </div>
-        <div class="overflow-x-auto">
-          <table class="min-w-full text-sm">
-            <thead>
-              <tr class="text-left text-gray-500">
-                <th class="py-2 pr-4">Key ID</th>
-                <th class="py-2 pr-4">Label</th>
-                <th class="py-2 pr-4">Active</th>
-                <th class="py-2 pr-4">Can Upload</th>
-                <th class="py-2 pr-4">Can Consume</th>
-                <th class="py-2 pr-4">RPM</th>
-                <th class="py-2 pr-4">Daily Cap</th>
-                <th class="py-2 pr-4">Actions</th>
-              </tr>
-            </thead>
-            <tbody id="keysTbody"></tbody>
-          </table>
-        </div>
+        <div class="tip">Key localStorage me save hoti hai.</div>
       </div>
-    </section>
-
-    <!-- Grants -->
-    <section id="tab-grants" class="hidden">
-      <div class="card">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="font-semibold">Consumer ↔ Owner Grants</h2>
-          <button class="btn" onclick="loadGrants()">Refresh</button>
-        </div>
-        <div id="grantsMatrix" class="overflow-x-auto"></div>
-      </div>
-    </section>
-
-    <!-- Stats -->
-    <section id="tab-stats" class="hidden">
-      <div class="card">
-        <div class="flex flex-wrap gap-3 mb-3 items-end">
-          <div>
-            <label class="text-xs text-gray-500">From</label>
-            <input id="fromDate" type="date" class="input w-44" />
-          </div>
-          <div>
-            <label class="text-xs text-gray-500">To</label>
-            <input id="toDate" type="date" class="input w-44" />
-          </div>
-          <div>
-            <label class="text-xs text-gray-500">Owners (comma-sep, optional)</label>
-            <input id="ownersInput" class="input w-72" placeholder="e.g. sanjay,shoib" />
-          </div>
-          <div>
-            <label class="text-xs text-gray-500">Consumers (comma-sep, optional)</label>
-            <input id="consumersInput" class="input w-72" placeholder="e.g. rahul" />
-          </div>
-          <button class="btn primary" onclick="runStats()">Run</button>
-          <button class="btn" onclick="exportStats()">Export CSV</button>
-        </div>
-        <div id="statsOut" class="space-y-4"></div>
-      </div>
-    </section>
-
+      <div><label>From</label><input id="fromDate" type="date"/></div>
+      <div><label>To</label><input id="toDate" type="date"/></div>
+      <div><label>Owner Keys (comma)</label><input id="ownerKeys" type="text" placeholder="sanjay,rahul,shoib"/></div>
+    </div>
   </div>
 
-  <script>
-    // ---- tiny utils ----
-    const $ = (q) => document.querySelector(q);
-    const api = {
-      key: '',
-      hdr() { return { 'X-API-Key': this.key, 'Content-Type': 'application/json' }; },
-      async get(url){ const r = await fetch(url, { headers: this.hdr() }); if(!r.ok) throw await r.text(); return r.json(); },
-      async post(url, body){ const r = await fetch(url, { method:'POST', headers: this.hdr(), body: JSON.stringify(body||{}) }); if(!r.ok) throw await r.text(); return r.json(); },
-    };
+  <div class="section panel">
+    <div class="right" style="margin-bottom:8px"><button id="statsBtn" class="btn brand">Load Stats</button></div>
+    <div id="totals" class="grid"></div>
+    <div class="row section">
+      <div class="panel" style="flex:1 1 520px">
+        <h3>Per Owner</h3>
+        <table class="table" id="perOwner"><thead></thead><tbody></tbody></table>
+      </div>
+      <div class="panel" style="flex:1 1 520px">
+        <h3>Per Consumer</h3>
+        <table class="table" id="perConsumer"><thead></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </div>
 
-    function showToast(msg, ok=true){
-      const el = document.createElement('div');
-      el.className = 'fixed bottom-4 right-4 z-50 card shadow-lg ' + (ok?'border-green-200':'border-red-200');
-      el.textContent = msg; document.body.appendChild(el);
-      setTimeout(()=>el.remove(), 2200);
+  <div class="section panel">
+    <div class="row" style="align-items:center;margin-bottom:6px">
+      <h3 style="margin:0">Manage API Keys <span class="tag">create / update / regen</span></h3>
+      <div class="right" style="margin-left:auto"><button id="keysRefreshBtn" class="btn">Refresh</button></div>
+    </div>
+    <table class="table" id="keysTable">
+      <thead><tr><th>Key ID</th><th>Label</th><th>Active</th><th>Upload</th><th>Consume</th><th>RPM</th><th>Daily Cap</th><th>Created</th><th>Actions</th></tr></thead>
+      <tbody></tbody>
+    </table>
+
+    <div class="section">
+      <h3>Create New Key</h3>
+      <div class="row">
+        <div style="flex:1 1 160px"><label>key_id</label><input id="new_key_id" type="text" placeholder="team01" class="mono"></div>
+        <div style="flex:1 1 220px"><label>label</label><input id="new_label" type="text" placeholder="Team 01"></div>
+        <div style="flex:1 1 120px"><label>RPM</label><input id="new_rpm" type="number" value="60" min="1"></div>
+        <div style="flex:1 1 140px"><label>Daily Cap</label><input id="new_cap" type="number" value="5000" min="1"></div>
+        <div class="right" style="align-items:flex-end"><button id="createKeyBtn" class="btn ok">Create</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section panel">
+    <div class="row" style="align-items:center;margin-bottom:6px">
+      <h3 style="margin:0">Grants (Consumer → Owner)</h3>
+      <div class="right" style="margin-left:auto"><button id="grantsRefreshBtn" class="btn">Refresh</button></div>
+    </div>
+    <table class="table" id="grantsTable">
+      <thead><tr><th>Consumer</th><th>Owner</th><th>Enabled</th><th>Created</th><th>Actions</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="section">
+      <h3>Add / Update Grant</h3>
+      <div class="row">
+        <div style="flex:1 1 220px"><label>consumer_key_id</label><input id="g_consumer" type="text" placeholder="rahul" class="mono"></div>
+        <div style="flex:1 1 220px"><label>owner_key_id</label><input id="g_owner" type="text" placeholder="sanjay" class="mono"></div>
+        <div class="right" style="align-items:flex-end">
+          <button id="grantBtn" class="btn ok">Grant</button>
+          <button id="revokeBtn" class="btn bad">Revoke</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+(() => {
+  const $=s=>document.querySelector(s), ls={get(k,d=null){try{return JSON.parse(localStorage.getItem(k))??d}catch{return d}}, set(k,v){localStorage.setItem(k,JSON.stringify(v))}};
+  const ADMIN_KEY_INPUT=$('#adminKey'), AUTH_BADGE=$('#authBadge'), TOAST=$('#toast');
+
+  function toast(m,t='info',ms=2500){TOAST.textContent=m;TOAST.style.display='block';clearTimeout(TOAST._t);TOAST._t=setTimeout(()=>TOAST.style.display='none',ms)}
+  function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]))}
+  function setAuthBadge(ok){AUTH_BADGE.classList.remove('ok','bad');AUTH_BADGE.classList.add(ok?'ok':'bad');AUTH_BADGE.textContent=ok?'Auth: ok':'Auth: failed'}
+  function getKey(){const v=ADMIN_KEY_INPUT.value.trim();return v}
+  async function api(url,{method='GET',body,params}={}){const k=getKey();if(!k||!k.includes('.'))throw new Error('Admin key format: admin.<secret>');const qs=params?('?'+new URLSearchParams(params)):'';
+    const r=await fetch(url+qs,{method,headers:{'X-API-Key':k,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,cache:'no-store'});
+    if(r.status===401){setAuthBadge(false);throw new Error('Unauthorized')} if(!r.ok){throw new Error(await r.text())} setAuthBadge(true); return r.headers.get('content-type')?.includes('json')?r.json():r.text()}
+
+  function todayISO(d=0){const x=new Date(Date.now()+d*86400000);return x.toISOString().slice(0,10)}
+  function initDates(){$('#fromDate').value=ls.get('from',todayISO(-11));$('#toDate').value=ls.get('to',todayISO(0));$('#ownerKeys').value=ls.get('owners','sanjay,rahul,shoib')}
+  function saveKey(){const k=getKey(); if(!k.includes('.')) return toast('Format: admin.<secret>','error'); ls.set('admin_key',k); toast('Saved','ok')}
+  function loadKey(){ADMIN_KEY_INPUT.value=ls.get('admin_key','')}
+
+  function card(k,v){return `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`}
+  function renderTotals(s){$('#totals').innerHTML=[card('Uploaded',s.totals?.uploaded??'—'),card('Unused',s.totals?.unused??'—'),card('Used total',s.totals?.used_total??'—'),card('Locked',s.totals?.locked??'—'),card('Reg success',s.totals?.reg_success??'—'),card('Code 282',s.totals?.code_282??'—')].join('')}
+  function renderPerOwner(rows){$('#perOwner thead').innerHTML=`<tr><th>Owner</th><th>Uploaded</th><th>Unused</th><th>Used total</th><th>Locked</th><th>Reg success</th><th>Code 282</th><th>Used pending</th></tr>`;
+    $('#perOwner tbody').innerHTML=rows.map(r=>`<tr><td class="mono">${esc(r.owner_key_id)}</td><td>${r.uploaded??0}</td><td>${r.unused??0}</td><td>${r.used_total??0}</td><td>${r.locked??0}</td><td>${r.reg_success??0}</td><td>${r.code_282??0}</td><td>${r.used_pending??0}</td></tr>`).join('')||`<tr><td colspan="8" class="muted">No data</td></tr>`}
+  function renderPerConsumer(rows){$('#perConsumer thead').innerHTML=`<tr><th>Consumer Key</th><th>Used total</th></tr>`;
+    $('#perConsumer tbody').innerHTML=rows.map(r=>`<tr><td class="mono">${esc(r.used_by_key)}</td><td>${r.total??0}</td></tr>`).join('')||`<tr><td colspan="2" class="muted">No data</td></tr>`}
+
+  async function loadStats(){const from=$('#fromDate').value||todayISO(-11),to=$('#toDate').value||todayISO(0),owners=($('#ownerKeys').value||'').trim();ls.set('from',from);ls.set('to',to);ls.set('owners',owners);
+    const p={date_from:from,date_to:to}; if(owners) p.owner_keys=owners; const s=await api('/v1/stats',{params:p}); renderTotals(s); renderPerOwner(s.per_owner||[]); renderPerConsumer(s.per_consumer||[]); toast('Stats loaded','ok',1200)}
+
+  async function loadKeys(){const r=await api('/v1/admin/list_keys'); const tbody=$('#keysTable tbody'); tbody.innerHTML='';
+    for(const k of (r.keys||[])){const tr=document.createElement('tr'); tr.innerHTML=`
+        <td class="mono">${esc(k.key_id)}</td>
+        <td><input data-f="label" type="text" value="${esc(k.label||'')}" /></td>
+        <td><input data-f="active" type="checkbox" ${k.active?'checked':''}/></td>
+        <td><input data-f="can_upload" type="checkbox" ${k.can_upload?'checked':''}/></td>
+        <td><input data-f="can_consume" type="checkbox" ${k.can_consume?'checked':''}/></td>
+        <td><input data-f="rpm_limit" type="number" value="${k.rpm_limit??60}" style="width:90px"/></td>
+        <td><input data-f="daily_cap" type="number" value="${k.daily_cap??0}" style="width:110px"/></td>
+        <td class="mono">${esc(k.created_at||'')}</td>
+        <td><div class="right"><button class="btn" data-act="save">Save</button><button class="btn warn" data-act="regen">Regen</button></div></td>`;
+      tr.querySelector('[data-act="save"]').onclick=()=>updateKeyRow(k.key_id,tr);
+      tr.querySelector('[data-act="regen"]').onclick=()=>regenSecret(k.key_id);
+      tbody.appendChild(tr)
+    } }
+
+  async function updateKeyRow(id,tr){const g=f=>{const el=tr.querySelector(`[data-f="${f}"]`); if(!el) return; if(el.type==='checkbox') return el.checked?1:0; if(el.type==='number') return Number(el.value||0); return el.value};
+    await api('/v1/admin/update_key',{method:'POST',body:{key_id:id,label:g('label'),active:g('active'),can_upload:g('can_upload'),can_consume:g('can_consume'),rpm_limit:g('rpm_limit'),daily_cap:g('daily_cap')}}); toast('Saved','ok'); loadKeys()}
+  async function regenSecret(id){if(!confirm(`Regenerate secret for ${id}?`)) return; const x=await api('/v1/admin/regen_secret',{method:'POST',body:{key_id:id}}); if(x.api_key){await navigator.clipboard.writeText(x.api_key).catch(()=>{}); toast('New key copied','ok',4000)}}
+
+  async function loadGrants(){const r=await api('/v1/admin/list_grants'); const tb=$('#grantsTable tbody');
+    tb.innerHTML=(r.grants||[]).map(g=>`<tr><td class="mono">${esc(g.consumer_key_id)}</td><td class="mono">${esc(g.owner_key_id)}</td><td>${g.enabled?1:0}</td><td class="mono">${esc(g.created_at||'')}</td><td><div class="right"><button class="btn ok" data-c="${esc(g.consumer_key_id)}" data-o="${esc(g.owner_key_id)}" data-act="grant">Grant</button><button class="btn bad" data-c="${esc(g.consumer_key_id)}" data-o="${esc(g.owner_key_id)}" data-act="revoke">Revoke</button></div></td></tr>`).join('')||`<tr><td colspan="5" class="muted">No grants</td></tr>`;
+    tb.querySelectorAll('[data-act="grant"]').forEach(b=>b.onclick=()=>grant(b.dataset.c,b.dataset.o));
+    tb.querySelectorAll('[data-act="revoke"]').forEach(b=>b.onclick=()=>revoke(b.dataset.c,b.dataset.o));
+  }
+  async function grant(c,o){c=c||$('#g_consumer').value.trim();o=o||$('#g_owner').value.trim(); if(!c||!o) return toast('consumer & owner required','error'); await api('/v1/admin/grant',{method:'POST',body:{consumer_key_id:c,owner_key_id:o,enabled:1}}); toast('Granted','ok'); $('#g_consumer').value=''; $('#g_owner').value=''; loadGrants()}
+  async function revoke(c,o){c=c||$('#g_consumer').value.trim();o=o||$('#g_owner').value.trim(); if(!c||!o) return toast('consumer & owner required','error'); await api('/v1/admin/revoke',{method:'POST',body:{consumer_key_id:c,owner_key_id:o}}); toast('Revoked','ok'); $('#g_consumer').value=''; $('#g_owner').value=''; loadGrants()}
+
+  function applyTheme(){const t=ls.get('theme','dark'); document.documentElement.classList.toggle('light', t==='light'); $('#themeBtn').textContent=(t==='light')?'Dark':'Light'}
+  function toggleTheme(){ls.set('theme', ls.get('theme','dark')==='light'?'dark':'light'); applyTheme()}
+
+  // init
+  (function start(){
+    applyTheme(); loadKey(); initDates();
+    $('#themeBtn').onclick=toggleTheme; $('#saveKeyBtn').onclick=()=>{saveKey(); checkAuth()}; $('#loadStatsBtn,#statsBtn').forEach?null:0;
+    document.querySelector('#loadStatsBtn').onclick=()=>{saveKey(); loadStats()};
+    document.querySelector('#statsBtn').onclick=loadStats; document.querySelector('#keysRefreshBtn').onclick=loadKeys;
+    document.querySelector('#grantsRefreshBtn').onclick=loadGrants; document.querySelector('#createKeyBtn').onclick=createKey;
+    document.querySelector('#grantBtn').onclick=()=>grant(); document.querySelector('#revokeBtn').onclick=()=>revoke();
+    checkAuth().then(()=>{loadStats().catch(()=>{}); loadKeys().catch(()=>{}); loadGrants().catch(()=>{})});
+  })();
+
+  async function checkAuth(){try{await api('/v1/admin/list_keys'); setAuthBadge(true)}catch{setAuthBadge(false)}}
+})();
+</script>
+<script>
+/* ===== Admin autoload boot (keeps you logged in after refresh) ===== */
+(function () {
+  const LS_KEY = 'admin_api_key_v1';
+
+  function qs(sel){ return document.querySelector(sel); }
+  // yeh IDs/func names aapke current admin.html se match karte hain:
+  const keyInput = qs('#adminKey') || qs('input[data-admin-key]');
+
+  // unified way to set current auth header for all fetches
+  function setAuth(key){
+    window.__ADMIN_KEY__ = key;
+    window.__AUTH_HEADER__ = { 'X-API-Key': key };
+    if (typeof setAuthBadge === 'function') setAuthBadge('pending'); // UI badge update (optional)
+  }
+
+  async function loadAll(){
+    const jobs = [];
+    if (typeof loadStats === 'function')        jobs.push(loadStats());
+    if (typeof refreshKeys === 'function')      jobs.push(refreshKeys());
+    if (typeof refreshGrants === 'function')    jobs.push(refreshGrants());
+    // quietly settle (UI me jo available hai wo aa jayega)
+    await Promise.allSettled(jobs);
+    if (typeof setAuthBadge === 'function') setAuthBadge('ok');
+  }
+
+  // Save button helper (agar aapke code me saveKey hai to usko wrap)
+  window.saveAdminKey = async function(){
+    const k = (keyInput?.value || '').trim();
+    if (!k) { alert('Please paste admin API key'); return; }
+    localStorage.setItem(LS_KEY, k);
+    setAuth(k);
+    await loadAll();
+  };
+
+  // Enter key => save + load
+  if (keyInput) {
+    keyInput.addEventListener('keydown', (e)=> {
+      if (e.key === 'Enter') { e.preventDefault(); window.saveAdminKey(); }
+    });
+  }
+
+  // ---- BOOTSTRAP on first paint ----
+  document.addEventListener('DOMContentLoaded', async () => {
+    // 1) pick key from localStorage
+    const saved = localStorage.getItem(LS_KEY);
+    if (saved) {
+      if (keyInput) keyInput.value = saved;
+      setAuth(saved);
+      // 2) auto fetch everything so UI prefilled rahe
+      await loadAll();
+    } else {
+      if (typeof setAuthBadge === 'function') setAuthBadge('failed');
     }
+  });
 
-    function showTab(id, btn){
-      document.querySelectorAll('[id^="tab-"]').forEach(s=>s.classList.add('hidden'));
-      $('#tab-'+id).classList.remove('hidden');
-      document.querySelectorAll('.tab-btn').forEach(b=>b.setAttribute('aria-selected','false'));
-      btn.setAttribute('aria-selected','true');
-      if(id==='overview') refreshOverview();
-      if(id==='keys') loadKeys();
-      if(id==='grants') loadGrants();
-      if(id==='stats') presetDates();
-    }
+  // expose small helper so existing "Load" button chahe to ise call kar sake
+  window.adminAutoLoad = loadAll;
+})();
+</script>
+<script>
+/* ===== keep-admin-logged-in: auto header + auto load on refresh ===== */
+(function(){
+  const LS = 'admin_api_key_v1';
+  const getKey = () => (localStorage.getItem(LS) || '').trim();
+  const setKey = (k) => localStorage.setItem(LS, (k||'').trim());
 
-    function saveKey(){
-      const k = $('#apiKey').value.trim();
-      if(!k){ showToast('Paste Admin X-API-Key', false); return; }
-      api.key = k; localStorage.setItem('ADMIN_X_KEY', k); verifyAuth();
-    }
-    function restoreKey(){ const k = localStorage.getItem('ADMIN_X_KEY')||''; api.key = k; $('#apiKey').value = k; verifyAuth(false); }
+  // 1) Monkey-patch fetch: always attach X-API-Key from localStorage
+  const _fetch = window.fetch.bind(window);
+  window.fetch = (input, init = {}) => {
+    init = init || {};
+    const headers = new Headers(init.headers || {});
+    const k = getKey();
+    if (k) headers.set('X-API-Key', k);
+    init.headers = headers;
+    return _fetch(input, init);
+  };
 
-    async function verifyAuth(notify=true){
-      try{
-        await api.get('/v1/admin/list_keys');
-        $('#authState').textContent = 'Authenticated';
-        $('#authState').className = 'text-sm text-green-600';
-        if(notify) showToast('Admin key saved ✅');
-      }catch(e){
-        $('#authState').textContent = 'Auth failed';
-        $('#authState').className = 'text-sm text-red-600';
-        if(notify) showToast('Auth failed ❌', false);
+  // --- helpers to find key input & click buttons by text ---
+  function findAdminInput(){
+    let inp = null;
+    document.querySelectorAll('label').forEach(l=>{
+      if (!inp && /admin\s*api\s*key/i.test(l.textContent)) {
+        inp = l.parentElement?.querySelector('input');
       }
-    }
+    });
+    return inp || document.querySelector('.controls input') || document.querySelector('input');
+  }
+  function clickButtonsByText(txt){
+    const want = txt.toLowerCase();
+    document.querySelectorAll('button, input[type="button"]').forEach(b=>{
+      const label = (b.textContent || b.value || '').trim().toLowerCase();
+      if (label === want) b.click();
+    });
+  }
 
-    // ---- Overview (stats quick) ----
-    function fmtDate(d){ return d.toISOString().slice(0,10); }
-    async function fmtDate(d){ return d.toISOString().slice(0,10); }
-    async function refreshOverview(){
-      const to = new Date();
-      const from = new Date(Date.now()-24*3600*1000);
-      try{
-        const q = `/v1/stats?date_from=${fmtDate(from)}&date_to=${fmtDate(to)}`;
-        const j = await api.get(q);
-        $('#kUploaded').textContent = j.totals.uploaded;
-        $('#kUsed').textContent = j.totals.used_total;
-        $('#kLocked').textContent = j.totals.locked;
-        $('#kReg').textContent = j.totals.reg_success;
-        $('#k282').textContent = j.totals.code_282;
-        $('#lastRef').textContent = 'Last refresh ' + new Date().toLocaleTimeString();
-      }catch(e){ showToast('Stats load failed', false); }
-    }
-    let overviewTimer=null; function toggleAutoRefresh(on){ if(overviewTimer){ clearInterval(overviewTimer); overviewTimer=null;} if(on){ overviewTimer=setInterval(refreshOverview,15000);} }&date_to=${fmtDate(to)}`;
-        const j = await api.get(q);
-        $('#kUploaded').textContent = j.totals.uploaded;
-        $('#kUsed').textContent = j.totals.used_total;
-        $('#kLocked').textContent = j.totals.locked;
-        $('#kReg').textContent = j.totals.reg_success;
-        $('#k282').textContent = j.totals.code_282;
-      }catch(e){ showToast('Stats load failed', false); }
-    }
-
-    // ---- Keys ----
-    async function loadKeys(){
-      try{
-        const j = await api.get('/v1/admin/list_keys');
-        const tbody = $('#keysTbody');
-        tbody.innerHTML = '';
-        for(const k of j.keys){
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td class="py-2 pr-4 font-mono">${k.key_id}</td>
-            <td class="py-2 pr-4"><input class="input" value="${k.label||''}" data-k="${k.key_id}" data-f="label"></td>
-            <td class="py-2 pr-4">
-              <label class="switch">
-                <input type="checkbox" ${k.active? 'checked':''} data-k="${k.key_id}" data-f="active">
-                <span class="slider"></span>
-              </label>
-            </td>
-            <td class="py-2 pr-4">
-              <label class="switch">
-                <input type="checkbox" ${k.can_upload? 'checked':''} data-k="${k.key_id}" data-f="can_upload">
-                <span class="slider"></span>
-              </label>
-            </td>
-            <td class="py-2 pr-4">
-              <label class="switch">
-                <input type="checkbox" ${k.can_consume? 'checked':''} data-k="${k.key_id}" data-f="can_consume">
-                <span class="slider"></span>
-              </label>
-            </td>
-            <td class="py-2 pr-4"><input class="input w-24" type="number" value="${k.rpm_limit}" data-k="${k.key_id}" data-f="rpm_limit"></td>
-            <td class="py-2 pr-4"><input class="input w-28" type="number" value="${k.daily_cap}" data-k="${k.key_id}" data-f="daily_cap"></td>
-            <td class="py-2 pr-4 flex gap-2">
-              <button class="btn" onclick="saveRow('${k.key_id}')">Save</button>
-              <button class="btn" onclick="regenSecret('${k.key_id}')">Regen Secret</button>
-            </td>`;
-          tbody.appendChild(tr);
-        }
-      }catch(e){ showToast('Load keys failed', false); }
-    }
-    async function saveRow(key_id){
-      const q = `[data-k="${key_id}"]`;
-      const getVal = (f)=>{
-        const el = document.querySelector(`${q}[data-f="${f}"]`);
-        if(!el) return null;
-        if(el.type==='checkbox') return el.checked?1:0;
-        if(el.type==='number') return Number(el.value||0);
-        return el.value;
+  // 2) Wire Save/Load buttons to persist key as well
+  function wireSaveLoadPersist(){
+    document.querySelectorAll('button, input[type="button"]').forEach(b=>{
+      const label = (b.textContent || b.value || '').trim().toLowerCase();
+      if (label === 'save' || label === 'load') {
+        b.addEventListener('click', ()=>{
+          const v = findAdminInput()?.value || '';
+          setKey(v);
+        }, { once:false });
       }
-      const body = { key_id, label:getVal('label'), active:getVal('active'), can_upload:getVal('can_upload'), can_consume:getVal('can_consume'), rpm_limit:getVal('rpm_limit'), daily_cap:getVal('daily_cap') };
-      try{ await api.post('/v1/admin/update_key', body); showToast('Saved ✓'); }
-      catch(e){ showToast('Save failed: '+e, false); }
-    }
+    });
+  }
 
-    // ---- Keys helpers: create & regen ----
-    async function createKeyPrompt(){
-      const id = prompt('New key_id (e.g. kartik)?');
-      if(!id) return;
-      const label = prompt('Label (optional)', id) || id;
-      try{
-        // Prefer backend endpoint if available
-        const body = { key_id:id, label, active:1, can_upload:1, can_consume:1, rpm_limit:60, daily_cap:5000 };
-        const r = await api.post('/v1/admin/create_key', body);
-        showToast('Key created ✓');
-        loadKeys();
-      }catch(e){
-        // Fallback: guide with CLI one-liner
-        const tip = `Backend create endpoint missing. SSH and run:
+  // 3) On boot: fill input from localStorage and auto-load panels
+  document.addEventListener('DOMContentLoaded', ()=>{
+    const k = getKey();
+    const inp = findAdminInput();
+    if (inp && k && !inp.value) inp.value = k;
 
-sudo -u acctapi /opt/account-api/venv/bin/python /opt/account-api/scripts/make_key.py ${id}`;
-        console.warn(e);
-        alert(tip);
-      }
-    }
-    async function regenSecret(key_id){
-      if(!confirm(`Regenerate secret for ${key_id}? Old one stops working immediately.`)) return;
-      try{
-        const r = await api.post('/v1/admin/regen_secret', { key_id });
-        // Expect backend to return { key_id, api_key: "<key>.<secret>" }
-        if(r && r.api_key){
-          navigator.clipboard?.writeText(r.api_key);
-          showToast('New secret generated & copied ✓');
-        }else{
-          showToast('Secret regenerated (check response)', true);
-          alert(JSON.stringify(r, null, 2));
-        }
-      }catch(e){
-        const tip = `Regen endpoint missing. SSH and run:
+    wireSaveLoadPersist();
 
-sudo -u acctapi /opt/account-api/venv/bin/python /opt/account-api/scripts/make_key.py ${key_id}`;
-        console.warn(e);
-        alert(tip);
-      }
+    if (k) {
+      // kick all data loads so UI prefilled rahe
+      clickButtonsByText('load stats');
+      clickButtonsByText('refresh');        // keys table
+      setTimeout(()=>clickButtonsByText('refresh'), 200); // grants table (second refresh on page)
     }
-
-    // ---- Grants ----
-    async function loadGrants(){
-      try{
-        const keys = (await api.get('/v1/admin/list_keys')).keys.map(k=>k.key_id);
-        const grants = (await api.get('/v1/admin/list_grants')).grants;
-        const gset = new Set(grants.filter(g=>g.enabled).map(g=>g.consumer_key_id+"->"+g.owner_key_id));
-        // build matrix
-        let html = '<table class="min-w-full text-sm"><thead><tr><th class="py-2 pr-4">Consumer ↓ / Owner →</th>' +
-          keys.map(o=>`<th class="py-2 px-2 text-center">${o}</th>`).join('') + '</tr></thead><tbody>';
-        for(const c of keys){
-          html += `<tr><td class="py-2 pr-4 font-mono">${c}</td>`;
-          for(const o of keys){
-            const id = `g_${c}__${o}`;
-            const on = gset.has(c+"->"+o);
-            html += `<td class="py-1 px-2 text-center"><input type="checkbox" id="${id}" ${on? 'checked':''} onchange="toggleGrant('${c}','${o}', this.checked)"></td>`;
-          }
-          html += '</tr>';
-        }
-        html += '</tbody></table>';
-        $('#grantsMatrix').innerHTML = html;
-      }catch(e){ showToast('Load grants failed', false); }
-    }
-    async function toggleGrant(consumer, owner, on){
-      try{
-        if(on){
-          await api.post('/v1/admin/grant', {consumer_key_id:consumer, owner_key_id:owner, enabled:1});
-        }else{
-          await api.post('/v1/admin/revoke', {consumer_key_id:consumer, owner_key_id:owner});
-        }
-        showToast('Updated ✓');
-      }catch(e){ showToast('Grant update failed: '+e, false); }
-    }
-
-    // ---- Stats ----
-    let lastStats = null;
-    function toCSV(rows){
-      return rows.map(r=>r.map(x=>String(x).replaceAll('"','""')).map(x=>`"${x}"`).join(',')).join('
-');
-    }
-    function exportStats(){
-      if(!lastStats){ showToast('Run stats first', false); return; }
-      const parts = [];
-      parts.push('# Totals');
-      parts.push(toCSV([["uploaded","used_total","locked","reg_success","code_282","used_pending"],[lastStats.totals.uploaded,lastStats.totals.used_total,lastStats.totals.locked,lastStats.totals.reg_success,lastStats.totals.code_282,lastStats.totals.used_pending]]));
-      if(lastStats.per_owner?.length){
-        parts.push('
-# Per Owner');
-        const head = ["owner","uploaded","used","locked","reg","code_282","pending"];
-        const rows = lastStats.per_owner.map(r=>[r.owner_key_id,r.uploaded,r.used_total,r.locked,r.reg_success,r.code_282,r.used_pending]);
-        parts.push(toCSV([head,...rows]));
-      }
-      if(lastStats.per_consumer?.length){
-        parts.push('
-# Per Consumer');
-        const head = ["consumer","total_used"]; const rows = lastStats.per_consumer.map(r=>[r.used_by_key,r.total]);
-        parts.push(toCSV([head,...rows]));
-      }
-      const blob = new Blob([parts.join('
-')], {type:'text/csv'});
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `stats_${Date.now()}.csv`;
-      a.click();
-    }
-    function presetDates(){
-      const to = new Date();
-      const from = new Date(Date.now()-24*3600*1000);
-      $('#fromDate').value = fmtDate(from);
-      $('#toDate').value = fmtDate(to);
-      runStats();
-    }
-    async function runStats(){
-      const f = $('#fromDate').value; const t = $('#toDate').value;
-      const owners = $('#ownersInput').value.trim();
-      const consumers = $('#consumersInput').value.trim();
-      const u = new URL('/v1/stats', location.origin);
-      u.searchParams.set('date_from', f); u.searchParams.set('date_to', t);
-      if(owners) u.searchParams.set('owner_keys', owners);
-      if(consumers) u.searchParams.set('consumer_keys', consumers);
-      try{
-        const s = await api.get(u.toString()); lastStats = s;
-        const out = [];
-        out.push(`<div class='grid grid-cols-1 md:grid-cols-3 gap-3'>
-          <div class='card'><div class='text-sm text-gray-500'>Uploaded</div><div class='text-2xl font-semibold'>${s.totals.uploaded}</div></div>
-          <div class='card'><div class='text-sm text-gray-500'>Used / Locked</div><div class='text-2xl font-semibold'>${s.totals.used_total} / ${s.totals.locked}</div></div>
-          <div class='card'><div class='text-sm text-gray-500'>Reg Success / 282 / Pending</div><div class='text-2xl font-semibold'>${s.totals.reg_success} / ${s.totals.code_282} / ${s.totals.used_pending}</div></div>
-        </div>`);
-        // per owner table
-        if(s.per_owner?.length){
-          out.push(`<div class='mt-4'><div class='font-semibold mb-2'>Per Owner</div>
-          <table class='min-w-full text-sm'><thead><tr class='text-left text-gray-500'>
-            <th class='py-2 pr-4'>Owner</th><th class='py-2 pr-4'>Uploaded</th><th class='py-2 pr-4'>Used</th><th class='py-2 pr-4'>Locked</th><th class='py-2 pr-4'>Reg</th><th class='py-2 pr-4'>282</th><th class='py-2 pr-4'>Pending</th>
-          </tr></thead><tbody>
-          ${s.per_owner.map(r=>`<tr><td class='py-2 pr-4 font-mono'>${r.owner_key_id}</td><td class='py-2 pr-4'>${r.uploaded}</td><td class='py-2 pr-4'>${r.used_total}</td><td class='py-2 pr-4'>${r.locked}</td><td class='py-2 pr-4'>${r.reg_success}</td><td class='py-2 pr-4'>${r.code_282}</td><td class='py-2 pr-4'>${r.used_pending}</td></tr>`).join('')}
-          </tbody></table></div>`);
-        }
-        if(s.per_consumer?.length){
-          out.push(`<div class='mt-4'><div class='font-semibold mb-2'>Per Consumer</div>
-          <table class='min-w-full text-sm'><thead><tr class='text-left text-gray-500'>
-            <th class='py-2 pr-4'>Consumer</th><th class='py-2 pr-4'>Total Used</th>
-          </tr></thead><tbody>
-          ${s.per_consumer.map(r=>`<tr><td class='py-2 pr-4 font-mono'>${r.used_by_key}</td><td class='py-2 pr-4'>${r.total}</td></tr>`).join('')}
-          </tbody></table></div>`);
-        }
-        $('#statsOut').innerHTML = out.join('');
-      }catch(e){ showToast('Stats failed: '+e, false); }
-    }
-
-    // boot
-    (function(){
-      restoreKey();
-      showTab('overview', document.querySelector('.tab-btn'));
-    })();
-  </script>
-</body>
-
+  });
+})();
+</script>
