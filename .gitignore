@@ -32,7 +32,7 @@ curl
 .env
 
 # sensitive / notes
-*.txt
+
 
 # patched / temp
 *_patched.py
