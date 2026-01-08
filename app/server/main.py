@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 # Clean, single-version Account API
 # FastAPI + aiosqlite + passlib
@@ -77,15 +76,6 @@ async def _db():
 def now_ts() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
-def extract_domain(email: str):
-    try:
-        d = email.split("@", 1)[1].lower().strip()
-        if d in ("hotmail.com", "outlook.com"):
-            return d
-    except Exception:
-        pass
-    return None
-
 # NEW: ensure admin_users table (no destructive change)
 async def _ensure_tables(conn):
     await conn.execute("""
@@ -139,28 +129,23 @@ def mint_admin_token(email: str, ttl_seconds: int = 86400) -> str:
     payload = f"{email}.{exp}"
     return f"adminlogin.{payload}.{_sign(payload)}"
 
-
 def verify_admin_token(token: str) -> Optional[str]:
-    # Accept tokens even if email contains dots -> split from the RIGHT
     if not token or not token.startswith("adminlogin."):
         return None
     try:
-        rest = token.split("adminlogin.", 1)[1]
-        parts = rest.split(".")
-        if len(parts) < 3:
+        _, email, exp, sig = token.split(".", 3)
+    except ValueError:
+        try:
+            _, payload, sig = token.split(".", 2)
+            email, exp = payload.split(".", 1)
+        except Exception:
             return None
-        email = ".".join(parts[:-2])
-        exp   = parts[-2]
-        sig   = parts[-1]
-    except Exception:
-        return None
     payload = f"{email}.{exp}"
     if _sign(payload) != sig:
         return None
     if int(exp) < int(time.time()):
         return None
     return email
-
 # ===== END PATCH =====
 
 # ===== BEGIN PATCH: key verification =====
@@ -248,63 +233,28 @@ async def _log_event(conn: aiosqlite.Connection, actor_key_id: str, etype: str, 
 
 async def _allowed_owners(conn: aiosqlite.Connection, consumer_key_id: str, owners_csv: Optional[str]) -> List[str]:
     """
-    ALWAYS allow self.
-    Grants only ADD extra owners, never remove self.
+    If owners_csv provided -> intersect with granted list.
+    Else -> use granted owners if any; if none, allow self (consumer can use own uploads).
     """
-
-    # explicit owners from query (optional)
     explicit = None
     if owners_csv:
         explicit = [o.strip() for o in owners_csv.split(",") if o.strip()]
 
-    # fetch granted owners
     cur = await conn.execute(
         "SELECT owner_key_id FROM key_grants WHERE consumer_key_id=? AND enabled=1",
-        (consumer_key_id,),
+        (consumer_key_id,)
     )
     rows = await cur.fetchall()
     granted = [r["owner_key_id"] for r in rows]
 
-    # ALWAYS include self
-    allowed_set = {consumer_key_id}
-
-    # add granted owners
-    for g in granted:
-        allowed_set.add(g)
-
-    # if explicit owners were requested, intersect
     if explicit is not None:
-        allowed_set = allowed_set.intersection(set(explicit))
-
-    return list(allowed_set)
-
-async def _auto_mark_wasted(conn, minutes: int = 10):
-    cur = await conn.execute("""
-        SELECT id
-        FROM accounts
-        WHERE status='used'
-          AND used_outcome IS NULL
-          AND used_at IS NOT NULL
-          AND (strftime('%s','now') - strftime('%s', used_at)) >= ?
-    """, (minutes * 60,))
-    ids = [r["id"] for r in await cur.fetchall()]
-
-    if not ids:
-        return 0
-
-    id_place = ",".join("?" * len(ids))
-    await conn.execute(
-        f"""
-        UPDATE accounts
-        SET status='wasted',
-            used_outcome='wasted'
-        WHERE id IN ({id_place})
-        """,
-        (*ids,)
-    )
-    return len(ids)
-
-    
+        if granted:
+            allowed = [o for o in explicit if o in set(granted)]
+        else:
+            allowed = [o for o in explicit if o == consumer_key_id]
+    else:
+        allowed = granted if granted else [consumer_key_id]
+    return allowed
 
 # ---------------------------
 # Health + Admin UI
@@ -333,35 +283,14 @@ async def v1_admin_login(request: Request):
     password = (data.get("password") or "")
     if not email or not password:
         raise HTTPException(400, "need_email_password")
-
     async with _db() as conn:
-        cur = await conn.execute(
-            "SELECT pass_hash FROM admin_users WHERE email=?",
-            (email,)
-        )
+        cur = await conn.execute("SELECT pass_hash FROM admin_users WHERE email=?", (email,))
         row = await cur.fetchone()
         if not row:
             raise HTTPException(401, "no_such_admin")
         if not bcrypt.verify(password, row["pass_hash"]):
             raise HTTPException(401, "bad_password")
-
-    token = mint_admin_token(email)
-
-    resp = JSONResponse({
-        "ok": True,
-        "admin_token": token
-    })
-
-    resp.set_cookie(
-        key="admin_token",
-        value=token,
-        httponly=True,
-        secure=True,
-        samesite="Lax",
-        path="/"
-    )
-
-    return resp
+    return {"ok": True, "admin_token": mint_admin_token(email)}
 
 # ---------------------------
 # Keys: me
@@ -390,10 +319,10 @@ async def v1_keys_me(X_API_KEY: str = Header(..., alias="X-API-Key")):
 async def admin_list_keys(X_API_KEY: str = Header(..., alias="X-API-Key")):
     async with _db() as conn:
         _ = await _require_admin(conn, X_API_KEY)
-        cur = await conn.execute("""
+        cur = await conn.execute(\"""
             SELECT key_id,label,active,can_upload,can_consume,daily_cap,rpm_limit,created_at
             FROM api_keys ORDER BY created_at ASC
-        """)
+        \""")
         rows = [dict(r) for r in await cur.fetchall()]
         return {"keys": rows}
 
@@ -435,12 +364,12 @@ async def v1_admin_create_key(request: Request, x_api_key: str = Header(...)):
         api_key = f"{key_id}.{secret}"
         key_hash = bcrypt.hash(api_key)
         await conn.execute(
-            """
+            \"\"\"
             INSERT INTO api_keys
               (key_id, key_hash, label, can_upload, can_consume, active, daily_cap, rpm_limit, secret_plain)
             VALUES
               (?, ?, ?, 1, 1, 1, 5000, 60, ?)
-            """,
+            \"\"\",
             (key_id, key_hash, label, secret),
         )
         return {"ok": True, "key_id": key_id, "api_key": api_key}
@@ -501,30 +430,6 @@ async def v1_admin_regen_secret(
 
     return {"ok": True, "api_key": api_key}
 
-@app.post("/v1/admin/mark_wasted", response_class=JSONResponse)
-async def mark_wasted(
-    minutes: int = Query(10, ge=1, le=1440),
-    X_API_KEY: str = Header(..., alias="X-API-Key"),
-):
-    async with _db() as conn:
-        admin = await _require_admin(conn, X_API_KEY)
-
-        count = await _auto_mark_wasted(conn, minutes)
-
-        await _log_event(
-            conn,
-            admin["key_id"],
-            "mark_wasted",
-            {"minutes": minutes, "count": count},
-        )
-
-        return {
-            "ok": True,
-            "wasted_marked": count,
-            "older_than_minutes": minutes,
-        }
-
-
 @app.post("/v1/admin/delete_key", response_class=JSONResponse)
 async def admin_delete_key(payload: dict, X_API_KEY: str = Header(..., alias="X-API-Key")):
     async with _db() as conn:
@@ -584,10 +489,10 @@ async def admin_show_secret(payload: dict, X_API_KEY: str = Header(..., alias="X
 async def admin_list_grants(X_API_KEY: str = Header(..., alias="X-API-Key")):
     async with _db() as conn:
         _ = await _require_admin(conn, X_API_KEY)
-        cur = await conn.execute("""
+        cur = await conn.execute(\"""
             SELECT consumer_key_id, owner_key_id, enabled, created_at
             FROM key_grants ORDER BY created_at ASC
-        """)
+        \""")
         rows = [dict(r) for r in await cur.fetchall()]
         return {"grants": rows}
 
@@ -600,11 +505,11 @@ async def admin_grant(payload: dict, X_API_KEY: str = Header(..., alias="X-API-K
         enabled = int(payload.get("enabled", 1))
         if not consumer or not owner or consumer == owner:
             raise HTTPException(400, "bad_grant")
-        await conn.execute("""
+        await conn.execute(\"""
             INSERT INTO key_grants(consumer_key_id, owner_key_id, enabled, created_at)
             VALUES (?,?,?,?)
             ON CONFLICT(consumer_key_id, owner_key_id) DO UPDATE SET enabled=excluded.enabled
-        """, (consumer, owner, enabled, now_ts()))
+        \""", (consumer, owner, enabled, now_ts()))
         await _log_event(conn, admin["key_id"], "grant", {"consumer": consumer, "owner": owner, "enabled": enabled})
         return {"ok": True}
 
@@ -652,27 +557,16 @@ async def v1_upload(request: Request, X_API_KEY: str = Header(..., alias="X-API-
             rt = parts[2].strip() if len(parts) > 2 else ""
             cid = parts[3].strip() if len(parts) > 3 else ""
             owner = parts[4].strip() if len(parts) > 4 and parts[4].strip() else me["key_id"]
-            domain = extract_domain(e)
- 
 
             cur = await conn.execute("SELECT id FROM accounts WHERE e=? AND owner=?", (e, owner))
             if await cur.fetchone():
                 dup += 1
                 continue
 
-            await conn.execute("""
-                INSERT INTO accounts (
-    email,password,refresh_token,client_id,
-    e,p,rt,cid,
-    domain,
-    owner_key_id,owner,
-    status,used_by,used_outcome,
-    created_at,used_at
-)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,'unused',NULL,NULL,?,NULL)
-
-""", (e, p, rt, cid, e, p, rt, cid, domain, owner, owner, now_ts()))
-
+            await conn.execute(\"""
+                INSERT INTO accounts (e,p,rt,cid,owner,status,used_by,used_outcome,created_at,used_at)
+                VALUES (?,?,?,?,?,'unused',NULL,NULL,?,NULL)
+            \""", (e, p, rt, cid, owner, now_ts()))
             inserted += 1
 
         await _log_event(conn, me["key_id"], "upload", {"inserted": inserted, "dup": dup})
@@ -682,63 +576,32 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,'unused',NULL,NULL,?,NULL)
 # Fetch (GET batched) + Mark
 # ---------------------------
 
-
 @app.get("/v1/fetch", response_class=JSONResponse)
 async def v1_fetch(
     quantity: int = Query(1, ge=1, le=100),
-    domain: str = Query("all", description="hotmail.com|outlook.com|all"),
+    owners: Optional[str] = Query(None),
     X_API_KEY: str = Header(..., alias="X-API-Key"),
 ):
-    """
-    Hardened fetch:
-    - owners derived from key grants only
-    - domain filter uses TRIM(LOWER(e))
-    - 403 if key has no allowed owners
-    - out_of_stock when no matches
-    """
-    domain = (domain or "all").lower()
-    allowed_domains = {"hotmail.com","outlook.com","all"}
-    if domain not in allowed_domains:
-        raise HTTPException(status_code=400, detail="domain must be hotmail.com, outlook.com, or all")
-
     async with _db() as conn:
         consumer = await verify_key(conn, X_API_KEY)
-        if not consumer.get("can_consume"):
-            raise HTTPException(status_code=403, detail="consume_not_allowed")
+        if not consumer["can_consume"]:
+            raise HTTPException(403, "consume_not_allowed")
 
-        # get allowed owners from key grants only
-        allowed = await _allowed_owners(conn, consumer["key_id"], None)
+        allowed = await _allowed_owners(conn, consumer["key_id"], owners)
         if not allowed:
-            raise HTTPException(status_code=403, detail="fetch_not_allowed")
+            return {"ok": True, "count": 0, "data": []}
 
         placeholders = ",".join("?" * len(allowed))
-        sql = f"""
+        cur = await conn.execute(f\"""
             SELECT id,e,p,rt,cid,owner
             FROM accounts
             WHERE status='unused' AND owner IN ({placeholders})
-        """
-        params = list(allowed)
-
-        if domain != "all":
-            sql += " AND TRIM(LOWER(e)) LIKE ?"
-            params.append(f"%@{domain}")
-
-        sql += " ORDER BY created_at ASC LIMIT ?"
-        params.append(quantity)
-
-        cur = await conn.execute(sql, tuple(params))
+            ORDER BY created_at ASC
+            LIMIT ?
+        \""", (*allowed, quantity))
         rows = [dict(r) for r in await cur.fetchall()]
-
         if not rows:
-            return {
-                "ok": True,
-                "count": 0,
-                "data": [],
-                "out_of_stock": True,
-                "reason": "no_matching_accounts",
-                "owners": allowed,
-                "domain": domain,
-            }
+            return {"ok": True, "count": 0, "data": []}
 
         ids = [r["id"] for r in rows]
         id_place = ",".join("?" * len(ids))
@@ -746,19 +609,80 @@ async def v1_fetch(
             f"UPDATE accounts SET status='used', used_by=?, used_outcome=NULL, used_at=? WHERE id IN ({id_place})",
             (consumer["key_id"], now_ts(), *ids)
         )
-        await _log_event(conn, consumer["key_id"], "fetch", {"count": len(ids), "owners": allowed, "domain": domain})
+        await _log_event(conn, consumer["key_id"], "fetch", {"count": len(ids), "owners": allowed})
 
         out = [{"id": r["id"], "e": r["e"], "p": r["p"], "rt": r["rt"], "cid": r["cid"], "owner": r["owner"]} for r in rows]
-        return {"ok": True, "count": len(out), "data": out, "out_of_stock": False, "owners": allowed, "domain": domain}
+        return {"ok": True, "count": len(out), "data": out}
 
+@app.get("/v1/mark", response_class=JSONResponse)
+async def v1_mark(
+    status: str = Query(..., pattern="^(success|code_282|locked)$"),
+    id: Optional[int] = Query(None),
+    email: Optional[str] = Query(None),
+    X_API_KEY: str = Header(..., alias="X-API-Key"),
+):
+    async with _db() as conn:
+        consumer = await verify_key(conn, X_API_KEY)
 
+        used_outcome = "locked" if status == "locked" else ("reg_success" if status == "success" else "code_282")
+        if not id and not email:
+            raise HTTPException(400, "need_id_or_email")
 
-#Stats + Owner summary
+        cur = await conn.execute("SELECT id, used_by FROM accounts WHERE " + ("id=?" if id else "e=?"),
+                                 ((id if id else email),))
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(404, "account_not_found")
+
+        if row["used_by"] and row["used_by"] != consumer["key_id"] and consumer["key_id"] not in ADMIN_KEYS_ENV:
+            raise HTTPException(403, "not_your_claim")
+
+        if used_outcome == "locked":
+            await conn.execute("UPDATE accounts SET status='locked', used_outcome='locked' WHERE id=?", (row["id"],))
+        else:
+            await conn.execute(
+                "UPDATE accounts SET status='used', used_outcome=?, used_at=COALESCE(used_at, ?) WHERE id=?",
+                (used_outcome, now_ts(), row["id"])
+            )
+
+        await _log_event(conn, consumer["key_id"], "mark", {"id": row["id"], "status": used_outcome})
+        return {"ok": True, "id": row["id"], "status": used_outcome}
+
+# ---------------------------
+# Admin: release pending
+# ---------------------------
+
+@app.post("/v1/admin/release_pending_older_than", response_class=JSONResponse)
+async def v1_release_pending(
+    minutes: int = Query(10, ge=1, le=1440),
+    X_API_KEY: str = Header(..., alias="X-API-Key"),
+):
+    async with _db() as conn:
+        admin = await _require_admin(conn, X_API_KEY)
+        cur = await conn.execute(\"""
+            SELECT id FROM accounts
+            WHERE status='used' AND used_outcome IS NULL AND used_at IS NOT NULL
+                  AND (strftime('%s','now') - strftime('%s', used_at)) >= ?
+        \""", (minutes * 60,))
+        ids = [r["id"] for r in await cur.fetchall()]
+        released = 0
+        if ids:
+            id_place = ",".join("?" * len(ids))
+            await conn.execute(
+                f"UPDATE accounts SET status='unused', used_by=NULL, used_outcome=NULL, used_at=NULL WHERE id IN ({id_place})",
+                (*ids,)
+            )
+            released = len(ids)
+        await _log_event(conn, admin["key_id"], "release_pending", {"minutes": minutes, "released": released})
+        return {"ok": True, "released": released}
+
+# ---------------------------
+# Stats + Owner summary
 # ---------------------------
 
 @app.get("/v1/stats", response_class=JSONResponse)
 async def v1_stats(
-    date_from: Optional[str] = Query(None),
+    date_from: str = Query(...),
     date_to: Optional[str] = Query(None),
     owner_keys: Optional[str] = Query(None),
     consumer_keys: Optional[str] = Query(None),
@@ -787,7 +711,7 @@ async def v1_stats(
         clause = " AND ".join(where + date_filter)
         where_clause = f"WHERE {clause}" if clause else ""
 
-        cur = await conn.execute(f"""
+        cur = await conn.execute(f\"""
             SELECT
               COUNT(*) as uploaded,
               SUM(CASE WHEN status='unused' THEN 1 ELSE 0 END) as unused,
@@ -798,10 +722,10 @@ async def v1_stats(
               SUM(CASE WHEN status='used' AND used_outcome IS NULL THEN 1 ELSE 0 END) as used_pending
             FROM accounts
             {where_clause}
-        """, tuple(params))
+        \""", tuple(params))
         totals = dict(await cur.fetchone())
 
-        cur = await conn.execute(f"""
+        cur = await conn.execute(f\"""
             SELECT owner as owner_key_id,
               COUNT(*) as uploaded,
               SUM(CASE WHEN status='unused' THEN 1 ELSE 0 END) as unused,
@@ -814,7 +738,7 @@ async def v1_stats(
             {where_clause}
             GROUP BY owner
             ORDER BY owner
-        """, tuple(params))
+        \""", tuple(params))
         per_owner = [dict(r) for r in await cur.fetchall()]
 
         where_c = []
@@ -826,14 +750,14 @@ async def v1_stats(
             where_c.append(f"owner IN ({','.join('?'*len(owners))})")
             params_c.extend(owners)
         where_c_clause = ("WHERE " + " AND ".join(where_c)) if where_c else ""
-        cur = await conn.execute(f"""
+        cur = await conn.execute(f\"""
             SELECT used_by as consumer, COUNT(*) as used_total
             FROM accounts
             {where_c_clause}
             GROUP BY used_by
             HAVING used_by IS NOT NULL
             ORDER BY used_total DESC
-        """, tuple(params_c))
+        \""", tuple(params_c))
         per_consumer = [dict(r) for r in await cur.fetchall()]
 
         return {
@@ -843,43 +767,6 @@ async def v1_stats(
             "per_owner": per_owner,
             "per_consumer": per_consumer,
         }
-
-@app.get("/v1/admin/quick_kpis", response_class=JSONResponse)
-async def v1_admin_quick_kpis(X_API_KEY: str = Header(..., alias="X-API-Key")):
-    async with _db() as conn:
-        await _require_admin(conn, X_API_KEY)
-
-        cur = await conn.execute("""
-            SELECT
-              SUM(CASE
-                    WHEN status='used'
-                     AND used_outcome IS NULL
-                     AND used_at IS NOT NULL
-                     AND (strftime('%s','now') - strftime('%s', used_at)) >= 600
-                    THEN 1 ELSE 0
-                  END) AS pending_10m,
-
-              SUM(CASE
-                    WHEN used_outcome='wasted'
-                     AND created_at >= date('now')
-                    THEN 1 ELSE 0
-                  END) AS wasted_today,
-
-              SUM(CASE
-                    WHEN used_outcome='wasted'
-                     AND created_at >= date('now','-7 day')
-                    THEN 1 ELSE 0
-                  END) AS wasted_7d
-            FROM accounts;
-        """)
-        row = await cur.fetchone()
-
-        return {
-            "pending_10m": row["pending_10m"] or 0,
-            "wasted_today": row["wasted_today"] or 0,
-            "wasted_7d": row["wasted_7d"] or 0,
-        }
-
 
 @app.get("/v1/owner_summary", response_class=JSONResponse)
 async def v1_owner_summary(
@@ -901,7 +788,7 @@ async def v1_owner_summary(
             params.append(date_to + " 23:59:59")
         where_clause = ("WHERE " + " AND ".join(date_filter)) if date_filter else ""
 
-        cur = await conn.execute(f"""
+        cur = await conn.execute(f\"""
             SELECT owner as owner_key, COUNT(*) as uploaded,
                    SUM(CASE WHEN status='unused' THEN 1 ELSE 0 END) as unused,
                    SUM(CASE WHEN status='used' THEN 1 ELSE 0 END) as used_total,
@@ -912,7 +799,7 @@ async def v1_owner_summary(
             {where_clause}
             GROUP BY owner
             ORDER BY owner
-        """, tuple(params))
+        \""", tuple(params))
         owners_rows = [dict(r) for r in await cur.fetchall()]
         for o in owners_rows:
             remaining_after_unlock = (o["unused"] or 0) + (o["locked"] or 0)
@@ -924,13 +811,13 @@ async def v1_owner_summary(
                 "other": (o["used_total"] or 0) - ((o["reg_success"] or 0) + (o["code_282"] or 0)),
             }
 
-        cur = await conn.execute(f"""
+        cur = await conn.execute(f\"""
             SELECT used_by as consumer, owner, COUNT(*) as cnt
             FROM accounts
             {where_clause if where_clause else ""}
             GROUP BY used_by, owner
             HAVING used_by IS NOT NULL
-        """, tuple(params))
+        \""", tuple(params))
         by = {}
         for r in await cur.fetchall():
             consumer = r["consumer"]
@@ -947,85 +834,3 @@ async def v1_owner_summary(
             "owners": owners_rows,
             "consumers": consumers_rows,
         }
-
-
-@app.get("/v1/mark", response_class=JSONResponse)
-async def v1_mark(
-    status: Optional[str] = Query(None, pattern="^(locked)$"),
-    outcome: Optional[str] = Query(None, pattern="^(success|code_282)$"),
-    id: Optional[List[int]] = Query(None),
-    email: Optional[str] = Query(None),
-    X_API_KEY: str = Header(..., alias="X-API-Key"),
-):
-    # Mark one/many accounts.
-    # - outcome=success|code_282  -> sets used_outcome (status remains 'used')
-    # - status=locked             -> sets status='locked' + used_outcome='locked' + stamps locked_at (and used_at if empty)
-    # Accepts multiple &id=...; or single email=... (resolves to id).
-    async with _db() as conn:
-        consumer = await verify_key(conn, X_API_KEY)
-        if not consumer["can_consume"]:
-            raise HTTPException(403, "consume_not_allowed")
-
-        ids: List[int] = id or []
-        if not ids and email:
-            cur = await conn.execute("SELECT id FROM accounts WHERE e=?", (email,))
-            row = await cur.fetchone()
-            if not row:
-                raise HTTPException(404, "account_not_found")
-            ids = [row["id"]]
-        if not ids:
-            raise HTTPException(400, "need_id_or_email")
-
-        placeholders = ",".join("?" * len(ids))
-
-        # Only claimer (used_by) can mark; admins bypass
-        cur = await conn.execute(f"SELECT used_by FROM accounts WHERE id IN ({placeholders})", (*ids,))
-        rows = [dict(r) for r in await cur.fetchall()]
-        is_admin = consumer["key_id"] in ADMIN_KEYS_ENV
-        if any(r["used_by"] != consumer["key_id"] for r in rows) and not is_admin:
-            raise HTTPException(403, "not_your_claim")
-
-        if outcome:
-            used_outcome = "reg_success" if outcome == "success" else "code_282"
-            ts = now_ts()
-            await conn.execute(
-                f"UPDATE accounts SET status='used', used_outcome=?, used_at=COALESCE(used_at, ?) WHERE id IN ({placeholders})",
-                (used_outcome, ts, *ids),
-            )
-            await _log_event(conn, consumer["key_id"], "mark", {"id": ids, "status": "used", "used_outcome": used_outcome})
-            return {"ok": True, "id": ids[0] if len(ids)==1 else ids, "status": "used", "outcome": used_outcome}
-
-        if status == "locked":
-            ts = now_ts()
-            await conn.execute(
-                f"UPDATE accounts SET status='locked', used_outcome='locked', locked_at=COALESCE(locked_at, ?), used_at=COALESCE(used_at, ?) WHERE id IN ({placeholders})",
-                (ts, ts, *ids),
-            )
-            await _log_event(conn, consumer["key_id"], "mark", {"id": ids, "status": "locked"})
-            return {"ok": True, "id": ids[0] if len(ids)==1 else ids, "status": "locked"}
-
-        raise HTTPException(400, "bad_request")
-
-from fastapi import Header, Request, HTTPException
-from fastapi.responses import FileResponse
-
-@app.get("/preview")
-async def preview(
-    request: Request,
-    X_API_KEY: str = Header(None, alias="X-API-Key")
-):
-    token = X_API_KEY
-
-    # 👇 fallback: browser login token
-    if not token:
-        token = request.cookies.get("admin_token") \
-                or request.headers.get("Authorization")
-
-    if not token:
-        raise HTTPException(status_code=401, detail="admin_key_required")
-
-    async with _db() as conn:
-        await _require_admin(conn, token)
-
-    return FileResponse("/opt/account-api/app/index.html")
-

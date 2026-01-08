@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Accounts Admin</title>
+  <style>
+    :root{--bg:#0b1020;--panel:#121833;--panel-2:#0f162f;--text:#e8eeff;--muted:#93a0b8;--brand:#4c8bf5;--brand-2:#1f6c2f;--ok:#16c47f;--warn:#ffbb02;--bad:#ff5d5d;--chip:#1a244d;--chip-br:#223068;--border:#1e2746;--shadow:0 8px 24px rgba(0,0,0,.25);--focus:0 0 0 3px rgba(76,139,245,.35);--radius:12px;--radius-sm:10px;--maxw:1200px}
+    body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Segoe UI Emoji"}
+    .container{max-width:var(--maxw);margin:20px auto;padding:0 16px}
+    .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+    .btn{appearance:none;padding:8px 12px;border-radius:10px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font-weight:600;cursor:pointer}
+    .grid{display:grid;gap:16px;grid-template-columns:1fr}
+    @media(min-width:960px){.grid{grid-template-columns:1.1fr .9fr}}
+    .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow)}
+    .card .hd{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:700}
+    .card .bd{padding:14px 16px}
+    table{width:100%;border-collapse:collapse}th,td{padding:10px 8px;border-bottom:1px solid var(--border)}
+    .toast{position:fixed;right:18px;bottom:18px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:none}
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <div><b>Accounts Admin</b> — <span id="meBadge">guest</span></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn" id="loginBtn">Login</button>
+      <button class="btn" id="keysRefresh">Refresh Keys</button>
+      <button class="btn" id="grantsRefresh">Refresh Grants</button>
+      <button class="btn" id="statsRefresh">Refresh Stats</button>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="hd">Stats</div>
+      <div class="bd">
+        <input type="date" id="fromDate">
+        <input type="date" id="toDate">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px">
+          <div>Total Uploaded: <b id="sUploaded">-</b></div>
+          <div>Unused: <b id="sUnused">-</b></div>
+          <div>Used: <b id="sUsed">-</b></div>
+          <div>Locked: <b id="sLocked">-</b></div>
+          <div>Reg OK: <b id="sRegOk">-</b></div>
+          <div>Code 282: <b id="s282">-</b></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="hd">Tools</div>
+      <div class="bd">
+        <label>Release pending (minutes):</label>
+        <input id="pm_minutes" value="10" style="max-width:140px"/>
+        <button class="btn" id="pm_release">Release</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <div class="hd">Keys</div>
+    <div class="bd">
+      <table id="keysTable"><thead><tr>
+        <th>Key</th><th>Label</th><th>Active</th><th>Upload</th><th>Consume</th><th>RPM</th><th>Daily</th><th>Created</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <div class="hd">Grants</div>
+    <div class="bd">
+      <div id="grantsBox">—</div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- Login dialog -->
+<dialog id="loginDlg">
+  <form method="dialog" style="padding:16px">
+    <h3>Admin Login</h3>
+    <div><label>Email</label><input id="li_email" placeholder="admin@example.com"></div>
+    <div><label>Password</label><input id="li_pass" type="password" placeholder="••••••••"></div>
+    <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" value="cancel">Cancel</button>
+      <button class="btn" id="li_submit" value="ok">Login</button>
+    </div>
+    <div id="li_msg" style="margin-top:8px;opacity:.8"></div>
+  </form>
+</dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const storage = window.localStorage;
+
+function toast(m, ms=1600){ const t=$('#toast'); t.textContent=m; t.style.display='block'; clearTimeout(toast._t); toast._t=setTimeout(()=>t.style.display='none', ms); }
+function xApiKey(){ return storage.getItem('x_api_key') || '' }
+function setKey(key){ storage.setItem('x_api_key', key); $('#meBadge').textContent = (key.startsWith('adminlogin.')?'admin':(key.split('.')[0]||'admin')); }
+async function api(path, opt={}){
+  const headers = Object.assign({'Content-Type':'application/json'}, opt.headers||{});
+  if(xApiKey()) headers['X-API-Key'] = xApiKey();
+  const r = await fetch(path, Object.assign({}, opt, {headers}));
+  if(!r.ok){ throw new Error(await r.text().catch(()=>r.statusText)); }
+  const ct=r.headers.get('content-type')||''; return ct.includes('application/json')? r.json(): r.text();
+}
+
+// login flow -> /v1/admin/login
+$('#loginBtn').onclick = () => $('#loginDlg').showModal();
+$('#li_submit').onclick = async (e)=>{
+  e.preventDefault();
+  const email = $('#li_email').value.trim(), password = $('#li_pass').value;
+  $('#li_msg').textContent='';
+  try{
+    const res = await api('/v1/admin/login', {method:'POST', body: JSON.stringify({email,password})});
+    if(res && res.admin_token){ setKey(res.admin_token); toast('Logged in'); $('#loginDlg').close(); init(); return; }
+    throw new Error('login_failed');
+  }catch(err){ $('#li_msg').textContent = 'Login failed: ' + (err.message||''); }
+};
+
+// stats -> FIX to /v1/stats
+async function loadStats(){
+  const from = $('#fromDate').value, to = $('#toDate').value;
+  const data = await api(`/v1/stats?date_from=${from}&date_to=${to}`);
+  const t = data.totals || {};
+  $('#sUploaded').textContent = t.uploaded ?? '-';
+  $('#sUnused').textContent   = t.unused ?? '-';
+  $('#sUsed').textContent     = t.used_total ?? '-';
+  $('#sLocked').textContent   = t.locked ?? '-';
+  $('#sRegOk').textContent    = t.reg_success ?? '-';
+  $('#s282').textContent      = t.code_282 ?? '-';
+}
+(function initDates(){
+  const to = new Date(), from = new Date(Date.now()-2*86400000);
+  const f = d=>{ d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10); };
+  $('#fromDate').value = f(from); $('#toDate').value = f(to);
+})();
+$('#statsRefresh').onclick = loadStats;
+
+// keys
+async function loadKeys(){
+  const data = await api('/v1/admin/list_keys');
+  const tb = $('#keysTable tbody'); tb.innerHTML='';
+  (data.keys||[]).forEach(k=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><code>${k.key_id}</code></td>
+      <td>${k.label||''}</td>
+      <td>${k.active? '✅':'❌'}</td>
+      <td>${k.can_upload? '✅':'❌'}</td>
+      <td>${k.can_consume? '✅':'❌'}</td>
+      <td>${k.rpm_limit||0}</td>
+      <td>${k.daily_cap||0}</td>
+      <td class="tiny">${(k.created_at||'').replace('T',' ').slice(0,19)}</td>`;
+    tb.appendChild(tr);
+  });
+}
+$('#keysRefresh').onclick = loadKeys;
+
+// grants (simple)
+async function loadGrants(){
+  const res = await api('/v1/admin/list_grants');
+  const g = res.grants || [];
+  $('#grantsBox').textContent = g.length + ' rows';
+}
+$('#grantsRefresh').onclick = loadGrants;
+
+// pending release -> FIX endpoint
+$('#pm_release').onclick = async ()=>{
+  const m = +($('#pm_minutes').value||10);
+  try{
+    await api(`/v1/admin/release_pending_older_than?minutes=${m}`, {method:'POST'});
+    toast('Release posted');
+  }catch(e){ toast('Release failed'); }
+};
+
+async function init(){ await Promise.allSettled([loadStats(), loadKeys(), loadGrants()]); }
+if(xApiKey()){ setKey(xApiKey()); init(); }
+</script>
+</body>
+</html>

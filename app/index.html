@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Account API – System Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <style>
+    :root {
+      --bg: #f9fafb;
+      --card: #ffffff;
+      --border: #e5e7eb;
+      --text: #111827;
+      --muted: #6b7280;
+      --green: #16a34a;
+      --amber: #d97706;
+      --red: #dc2626;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    header {
+      margin-bottom: 24px;
+    }
+
+    header h1 {
+      font-size: 22px;
+      margin: 0;
+    }
+
+    header p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px 20px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+
+    .label {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .value {
+      font-size: 34px;
+      font-weight: 700;
+      margin-top: 6px;
+      line-height: 1;
+    }
+
+    .green { color: var(--green); }
+    .amber { color: var(--amber); }
+    .red { color: var(--red); }
+
+    footer {
+      margin-top: 28px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .error {
+      color: var(--red);
+      font-size: 13px;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <header>
+    <h1>Account API – System Health</h1>
+    <p>Live operational snapshot (read-only)</p>
+  </header>
+
+  <section class="kpis">
+    <div class="card">
+      <div class="label">Pending &gt; 10 minutes</div>
+      <div class="value green" id="pending">–</div>
+    </div>
+
+    <div class="card">
+      <div class="label">Wasted Today</div>
+      <div class="value amber" id="wasted-today">–</div>
+    </div>
+
+    <div class="card">
+      <div class="label">Wasted (Last 7 Days)</div>
+      <div class="value red" id="wasted-7d">–</div>
+    </div>
+  </section>
+
+  <div id="error" class="error" style="display:none;"></div>
+
+  <footer>
+    Auto-updated • No actions • Backend-verified
+  </footer>
+
+  <script>
+    async function loadKPIs() {
+      const token =
+        localStorage.getItem("ADMIN_TOKEN") ||
+        localStorage.getItem("X_API_KEY");
+
+      if (!token) {
+        showError("Admin token not found in browser storage");
+        return;
+      }
+
+      try {
+        const res = await fetch("/v1/admin/quick_kpis", {
+          headers: { "X-API-Key": token }
+        });
+
+        if (!res.ok) {
+          showError("API error: " + res.status);
+          return;
+        }
+
+        const d = await res.json();
+
+        const pendingEl = document.getElementById("pending");
+        pendingEl.textContent = d.pending_10m;
+        pendingEl.className = "value " + (d.pending_10m > 0 ? "red" : "green");
+
+        document.getElementById("wasted-today").textContent = d.wasted_today;
+        document.getElementById("wasted-7d").textContent = d.wasted_7d;
+
+      } catch (e) {
+        showError("Failed to load KPIs");
+        console.error(e);
+      }
+    }
+
+    function showError(msg) {
+      const el = document.getElementById("error");
+      el.textContent = msg;
+      el.style.display = "block";
+    }
+
+    loadKPIs();
+  </script>
+
+</body>
+</html>
+

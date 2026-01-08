@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Accounts Admin — Pro</title>
+<style>
+:root{--bg:#0c1222;--panel:#111a33;--panel-2:#0f162f;--text:#e8eeff;--muted:#93a0b8;--border:#1e2746;--brand:#5B8CFF;--ok:#16C47F;--warn:#FFBB02;--bad:#FF5D5D;--chip:#1a244d;--radius:14px;--shadow:0 10px 26px rgba(0,0,0,.28)}
+[data-theme="light"]{--bg:#f6f7fb;--panel:#ffffff;--panel-2:#f3f5fb;--text:#101423;--muted:#5b6b85;--border:#e6e9f2;--brand:#2563EB;--ok:#0EA371;--warn:#B88900;--bad:#E5484D;--chip:#eef2ff}
+html,body{height:100%}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial}
+.wrap{max-width:1240px;margin:18px auto;padding:0 16px}.top{display:flex;align-items:center;gap:10px;justify-content:space-between;margin-bottom:12px}.brand{font-weight:800;letter-spacing:.3px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--border);border-radius:999px;background:var(--panel-2);color:var(--muted);font-weight:600}
+.btn{appearance:none;border:1px solid var(--border);background:var(--panel-2);color:var(--text);padding:8px 12px;border-radius:12px;cursor:pointer;font-weight:700}
+.btn.primary{background:var(--brand);border-color:transparent;color:#fff}.btn.small{padding:6px 10px;border-radius:10px;font-weight:600}.grid{display:grid;gap:16px;grid-template-columns:1fr}
+@media(min-width:1000px){.grid{grid-template-columns:1.1fr .9fr}}.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius)}
+.card>.hd{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);font-weight:800}.card>.bd{padding:14px 16px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.field{display:flex;flex-direction:column;gap:8px;margin-right:8px}
+.field input,.field select{background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:10px}
+.kpis{display:grid;gap:10px;grid-template-columns:repeat(6,1fr)}.kpis .box{background:var(--panel-2);border:1px solid var(--border);border-radius:12px;padding:10px}.kpis .num{font-weight:900;font-size:18px}
+table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid var(--border)}th{font-size:13px;text-transform:uppercase;letter-spacing:.6px;text-align:left;color:var(--muted)}
+.muted{color:var(--muted)}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}dialog::backdrop{background:rgba(0,0,0,.3)}
+dialog{border:1px solid var(--border);border-radius:14px;background:var(--panel);color:var(--text);min-width:320px}.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 0}
+.tabs .tab{padding:8px 12px;border-radius:10px;border:1px solid var(--border);background:var(--panel-2);cursor:pointer;font-weight:700}.tabs .tab.active{background:var(--brand);color:#fff;border-color:transparent}
+code.inline{background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:2px 6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand">Accounts Admin — <span id="meBadge">guest</span></div>
+    <div class="row">
+      <button class="btn small" id="themeBtn">Theme</button>
+      <button class="btn small" id="loginBtn">Login</button>
+      <button class="btn small" id="logoutBtn" style="display:none">Logout</button>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="overview">Overview</div>
+    <div class="tab" data-tab="users">Users</div>
+    <div class="tab" data-tab="keys">Keys</div>
+    <div class="tab" data-tab="grants">Grants</div>
+    <div class="tab" data-tab="tools">Tools</div>
+  </div>
+
+  <div id="tab-overview" class="tabpage" style="margin-top:10px">
+    <div class="grid">
+      <div class="card">
+        <div class="hd">Stats</div>
+        <div class="bd">
+          <div class="row">
+            <div class="field"><label>From</label><input type="date" id="fromDate"></div>
+            <div class="field"><label>To</label><input type="date" id="toDate"></div>
+            <button class="btn small" id="refreshStats">Refresh</button>
+          </div>
+          <div class="kpis" style="margin-top:12px">
+            <div class="box"><div class="muted">Total Uploaded</div><div class="num" id="kUploaded">-</div></div>
+            <div class="box"><div class="muted">Unused</div><div class="num" id="kUnused">-</div></div>
+            <div class="box"><div class="muted">Used</div><div class="num" id="kUsed">-</div></div>
+            <div class="box"><div class="muted">Locked</div><div class="num" id="kLocked">-</div></div>
+            <div class="box"><div class="muted">Reg OK</div><div class="num ok" id="kReg">-</div></div>
+            <div class="box"><div class="muted">Code 282</div><div class="num warn" id="k282">-</div></div>
+          </div>
+          <div style="margin-top:16px">
+            <b>Owners</b>
+            <table id="ownersTable"><thead><tr>
+              <th>Owner</th><th>Uploaded</th><th>Unused</th><th>Used</th><th>Locked</th><th>Reg OK</th><th>282</th><th>Pending</th>
+            </tr></thead><tbody></tbody></table>
+          </div>
+          <div style="margin-top:16px">
+            <b>Per Consumer</b>
+            <table id="consumersTable"><thead><tr>
+              <th>Consumer</th><th>Used</th></tr></thead><tbody></tbody></table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="hd">Quick Actions</div>
+        <div class="bd">
+          <div class="field"><label>Release pending (minutes)</label>
+            <input id="relMin" value="10" style="max-width:130px">
+          </div>
+          <button class="btn small" id="btnRelease">Release</button>
+          <div style="margin-top:14px" class="muted">
+            Mark account:
+            <span class="row" style="margin-top:8px">
+              <select id="markStatus">
+                <option value="success">success</option>
+                <option value="code_282">code_282</option>
+                <option value="locked">locked</option>
+              </select>
+              <input id="markId" placeholder="id (optional)">
+              <input id="markEmail" placeholder="email (optional)">
+              <button class="btn small" id="btnMark">Mark</button>
+            </span>
+            <div class="muted" style="margin-top:6px">Uses <code class="inline">/v1/mark</code></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-users" class="tabpage" style="display:none;margin-top:10px">
+    <div class="card">
+      <div class="hd">Users (Owners) — aggregated</div>
+      <div class="bd">
+        <div class="row" style="margin-bottom:8px">
+          <button class="btn small" id="refreshUsers">Refresh</button>
+        </div>
+        <table id="usersTable"><thead><tr>
+          <th>User</th><th>Uploaded</th><th>Unused</th><th>Used</th>
+          <th>Locked</th><th>Reg OK</th><th>282</th><th>Used by self</th><th>Used by others</th>
+        </tr></thead><tbody></tbody></table>
+        <div class="muted" style="margin-top:6px">Data from <code class="inline">/v1/owner_summary</code></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-keys" class="tabpage" style="display:none;margin-top:10px">
+    <div class="card">
+      <div class="hd">Keys</div>
+      <div class="bd">
+        <div class="row" style="margin-bottom:10px">
+          <input id="newKeyId" placeholder="key_id">
+          <input id="newKeyLabel" placeholder="label (optional)">
+          <label><input id="newActive" type="checkbox" checked> active</label>
+          <label><input id="newUpload" type="checkbox" checked> can_upload</label>
+          <label><input id="newConsume" type="checkbox" checked> can_consume</label>
+          <input id="newRPM" placeholder="rpm_limit" value="60" style="width:110px">
+          <input id="newDaily" placeholder="daily_cap" value="5000" style="width:110px">
+          <button class="btn small primary" id="btnCreateKey">Create</button>
+        </div>
+        <table id="keysTable"><thead><tr>
+          <th>Key</th><th>Label</th><th>Active</th><th>Upload</th><th>Consume</th><th>RPM</th><th>Daily</th><th>Created</th><th>Actions</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-grants" class="tabpage" style="display:none;margin-top:10px">
+    <div class="card">
+      <div class="hd">Grants Matrix (Consumers × Owners)</div>
+      <div class="bd" id="grantsMatrix">Loading…</div>
+    </div>
+  </div>
+
+  <div id="tab-tools" class="tabpage" style="display:none;margin-top:10px">
+    <div class="card">
+      <div class="hd">Utilities</div>
+      <div class="bd">
+        <div>Copy/Reveal API Key from Keys table. Regenerate only when you mean it.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<dialog id="loginDlg">
+  <form method="dialog" style="padding:16px;min-width:340px">
+    <h3 style="margin:0 0 10px 0">Admin Login</h3>
+    <div class="field"><label>Email</label><input id="li_email" placeholder="you@mail.com"/></div>
+    <div class="field"><label>Password</label><input id="li_pass" type="password" placeholder="********"/></div>
+    <div class="row" style="justify-content:flex-end;margin-top:10px">
+      <button class="btn" value="cancel">Cancel</button>
+      <button class="btn primary" id="li_submit" value="ok">Login</button>
+    </div>
+    <div id="li_msg" class="muted" style="margin-top:8px"></div>
+  </form>
+</dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s);const storage=localStorage;
+const tabs=[...document.querySelectorAll('.tab')];
+const pages={overview:document.querySelector('#tab-overview'),users:document.querySelector('#tab-users'),keys:document.querySelector('#tab-keys'),grants:document.querySelector('#tab-grants'),tools:document.querySelector('#tab-tools')};
+tabs.forEach(t=>t.onclick=()=>{tabs.forEach(x=>x.classList.remove('active'));t.classList.add('active');Object.values(pages).forEach(p=>p.style.display='none');pages[t.dataset.tab].style.display='block';});
+document.querySelector('#themeBtn').onclick=()=>{const d=document.documentElement;d.setAttribute('data-theme',d.getAttribute('data-theme')==='light'?'dark':'light');storage.setItem('theme',d.getAttribute('data-theme'));};(function(){const th=storage.getItem('theme');if(th)document.documentElement.setAttribute('data-theme',th);})();
+(function(){const to=new Date();const from=new Date(Date.now()-2*86400000);const f=d=>{d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d.toISOString().slice(0,10);};document.querySelector('#fromDate').value=f(from);document.querySelector('#toDate').value=f(to);})();
+function xKey(){return storage.getItem('x_api_key')||''}function setKey(k){if(k)storage.setItem('x_api_key',k);document.querySelector('#meBadge').textContent=k?'admin':'guest';document.querySelector('#logoutBtn').style.display=k?'inline-flex':'none';}
+async function api(path,opt={}){const headers=Object.assign({'Content-Type':'application/json'},opt.headers||{});const key=xKey();if(key)headers['X-API-Key']=key;const r=await fetch(path,Object.assign({},opt,{headers}));const ct=r.headers.get('content-type')||'';if(!r.ok){let msg=await r.text().catch(()=>r.statusText);throw new Error(msg||r.statusText);}return ct.includes('application/json')?r.json():r.text();}
+function toast(m,ms=1600){const t=document.querySelector('#toast');t.textContent=m;t.style.display='block';clearTimeout(toast._t);toast._t=setTimeout(()=>t.style.display='none',ms);}
+document.querySelector('#loginBtn').onclick=()=>document.querySelector('#loginDlg').showModal();
+document.querySelector('#logoutBtn').onclick=()=>{storage.removeItem('x_api_key');setKey('');toast('Logged out')};
+document.querySelector('#li_submit').onclick=async(e)=>{e.preventDefault();document.querySelector('#li_msg').textContent='';try{const email=document.querySelector('#li_email').value.trim(),password=document.querySelector('#li_pass').value;const res=await api('/v1/admin/login',{method:'POST',body:JSON.stringify({email,password})});if(res&&res.admin_token){setKey(res.admin_token);document.querySelector('#loginDlg').close();toast('Logged in');refreshAll();return;}throw new Error('login_failed');}catch(err){document.querySelector('#li_msg').textContent='Login failed: '+(err.message||'');}};
+async function loadStats(){const from=document.querySelector('#fromDate').value,to=document.querySelector('#toDate').value;const data=await api(`/v1/stats?date_from=${from}&date_to=${to}`);const t=data.totals||{};document.querySelector('#kUploaded').textContent=t.uploaded??'-';document.querySelector('#kUnused').textContent=t.unused??'-';document.querySelector('#kUsed').textContent=t.used_total??'-';document.querySelector('#kLocked').textContent=t.locked??'-';document.querySelector('#kReg').textContent=t.reg_success??'-';document.querySelector('#k282').textContent=t.code_282??'-';const ot=document.querySelector('#ownersTable tbody');ot.innerHTML='';(data.per_owner||[]).forEach(o=>{const tr=document.createElement('tr');tr.innerHTML=`<td><b>${o.owner_key_id||o.owner||''}</b></td><td>${o.uploaded||0}</td><td>${o.unused||0}</td><td>${o.used_total||0}</td><td>${o.locked||0}</td><td>${o.reg_success||0}</td><td>${o.code_282||0}</td><td>${o.used_pending||0}</td>`;ot.appendChild(tr);});const ct=document.querySelector('#consumersTable tbody');ct.innerHTML='';(data.per_consumer||[]).forEach(c=>{const tr=document.createElement('tr');tr.innerHTML=`<td><b>${c.consumer||'-'}</b></td><td>${c.used_total||0}</td>`;ct.appendChild(tr);});}
+document.querySelector('#refreshStats').onclick=loadStats;
+async function loadUsers(){const from=document.querySelector('#fromDate').value,to=document.querySelector('#toDate').value;const sum=await api(`/v1/owner_summary?date_from=${from}&date_to=${to}`);const byOwner={};(sum.owners||[]).forEach(o=>byOwner[o.owner]=o);const usedSelf={},usedOther={};(sum.consumers||[]).forEach(c=>{const map=c.by_owner||{};Object.keys(map).forEach(owner=>{const cnt=map[owner]||0;if(c.consumer===owner){usedSelf[owner]=(usedSelf[owner]||0)+cnt;}else{usedOther[owner]=(usedOther[owner]||0)+cnt;}})});const tb=document.querySelector('#usersTable tbody');tb.innerHTML='';Object.keys(byOwner).sort().forEach(owner=>{const o=byOwner[owner];const tr=document.createElement('tr');tr.innerHTML=`<td><b>${owner}</b></td><td>${o.uploaded||0}</td><td>${o.unused||0}</td><td>${o.used_total||0}</td><td>${o.locked||0}</td><td>${o.reg_success||0}</td><td>${o.code_282||0}</td><td>${usedSelf[owner]||0}</td><td>${usedOther[owner]||0}</td>`;tb.appendChild(tr);});}
+document.querySelector('#refreshUsers').onclick=loadUsers;
+async function loadKeys(){const res=await api('/v1/admin/list_keys');const tb=document.querySelector('#keysTable tbody');tb.innerHTML='';(res.keys||[]).forEach(k=>{const tr=document.createElement('tr');tr.dataset.kid=k.key_id;tr.innerHTML=`<td><b>${k.key_id}</b></td><td><input data-f="label" value="${k.label||''}" style="width:140px"/></td><td class="c"><input type="checkbox" data-f="active" ${k.active?'checked':''}></td><td class="c"><input type="checkbox" data-f="can_upload" ${k.can_upload?'checked':''}></td><td class="c"><input type="checkbox" data-f="can_consume" ${k.can_consume?'checked':''}></td><td><input data-f="rpm_limit" value="${k.rpm_limit||0}" style="width:80px"/></td><td><input data-f="daily_cap" value="${k.daily_cap||0}" style="width:90px"/></td><td class="muted">${(k.created_at||'').replace('T',' ').slice(0,19)}</td><td><button class="btn small" data-act="save">Save</button> <button class="btn small" data-act="reveal">Reveal</button> <button class="btn small" data-act="regen">Regen</button> <button class="btn small" data-act="del">Delete</button></td>`;tb.appendChild(tr);});tb.querySelectorAll('button[data-act="save"]').forEach(b=>b.onclick=async(e)=>{const tr=e.target.closest('tr');const kid=tr.dataset.kid;const payload={key_id:kid};tr.querySelectorAll('[data-f]').forEach(el=>{const f=el.dataset.f;let v=el.type==='checkbox'?el.checked:(el.value||'').trim();if(['rpm_limit','daily_cap','active','can_upload','can_consume'].includes(f)){if(el.type==='checkbox')v=el.checked?1:0;else v=parseInt(v||'0',10);}payload[f]=v;});await api('/v1/admin/update_key',{method:'POST',body:JSON.stringify(payload)});toast('Saved '+kid);});tb.querySelectorAll('button[data-act="reveal"]').forEach(b=>b.onclick=async(e)=>{const kid=e.target.closest('tr').dataset.kid;const r=await api('/v1/admin/show_secret',{method:'POST',body:JSON.stringify({key_id:kid})});await navigator.clipboard.writeText(r.api_key||(r.key_id+'.'+r.secret));toast('API key copied');});tb.querySelectorAll('button[data-act="regen"]').forEach(b=>b.onclick=async(e)=>{const kid=e.target.closest('tr').dataset.kid;if(!confirm(`Regenerate secret for ${kid}? Old API key will stop working.`))return;const r=await api('/v1/admin/regen_secret',{method:'POST',body:JSON.stringify({key_id:kid})});await navigator.clipboard.writeText(r.api_key);toast('New API key copied');});tb.querySelectorAll('button[data-act="del"]').forEach(b=>b.onclick=async(e)=>{const kid=e.target.closest('tr').dataset.kid;if(!confirm(`Delete key ${kid}?`))return;await api('/v1/admin/delete_key',{method:'POST',body:JSON.stringify({key_id:kid})});loadKeys();});}
+document.querySelector('#btnCreateKey').onclick=async()=>{const p={key_id:document.querySelector('#newKeyId').value.trim(),label:document.querySelector('#newKeyLabel').value.trim()};if(!p.key_id){toast('key_id required');return;}await api('/v1/admin/create_key',{method:'POST',body:JSON.stringify(p)});const upd={key_id:p.key_id,active:document.querySelector('#newActive').checked?1:0,can_upload:document.querySelector('#newUpload').checked?1:0,can_consume:document.querySelector('#newConsume').checked?1:0,rpm_limit:parseInt(document.querySelector('#newRPM').value||'0',10),daily_cap:parseInt(document.querySelector('#newDaily').value||'0',10)};await api('/v1/admin/update_key',{method:'POST',body:JSON.stringify(upd)});loadKeys();toast('Key created');};
+async function loadGrants(){const keys=await api('/v1/admin/list_keys');const grants=await api('/v1/admin/list_grants');const owners=keys.keys.map(k=>k.key_id);const consumers=owners.slice();const matrix={};(grants.grants||[]).forEach(g=>{if(!matrix[g.consumer_key_id])matrix[g.consumer_key_id]={};matrix[g.consumer_key_id][g.owner_key_id]=!!g.enabled;});const box=document.querySelector('#grantsMatrix');const tbl=document.createElement('table');const thead=document.createElement('thead');let h='<tr><th>Consumer \\ Owner</th>';owners.forEach(o=>h+=`<th>${o}</th>`);h+='</tr>';thead.innerHTML=h;tbl.appendChild(thead);const tbody=document.createElement('tbody');consumers.forEach(c=>{const tr=document.createElement('tr');let row=`<td><b>${c}</b></td>`;owners.forEach(o=>{const checked=matrix[c]?.[o]?'checked':'';row+=`<td style="text-align:center"><input type="checkbox" data-c="${c}" data-o="${o}" ${checked}></td>`;});tr.innerHTML=row;tbody.appendChild(tr);});tbl.appendChild(tbody);box.innerHTML='';box.appendChild(tbl);box.querySelectorAll('input[type="checkbox"]').forEach(ch=>ch.onchange=async(e)=>{const c=e.target.dataset.c,o=e.target.dataset.o;if(e.target.checked){await api('/v1/admin/grant',{method:'POST',body:JSON.stringify({consumer_key_id:c,owner_key_id:o,enabled:1})});}else{await api('/v1/admin/revoke',{method:'POST',body:JSON.stringify({consumer_key_id:c,owner_key_id:o})});}});}
+document.querySelector('#btnRelease').onclick=async()=>{const m=parseInt(document.querySelector('#relMin').value||'10',10);const r=await api(`/v1/admin/release_pending_older_than?minutes=${m}`,{method:'POST'});toast(`Released ${r.released||0}`);};
+document.querySelector('#btnMark').onclick=async()=>{const status=document.querySelector('#markStatus').value;const id=(document.querySelector('#markId').value||'').trim();const email=(document.querySelector('#markEmail').value||'').trim();const q=new URLSearchParams({status});if(id)q.set('id',id);if(email)q.set('email',email);const r=await api(`/v1/mark?${q.toString()}`);toast(`Marked id ${r.id} as ${r.status}`);};
+async function refreshAll(){await Promise.allSettled([loadStats(),loadUsers(),loadKeys(),loadGrants()]);}
+if(xKey()){setKey(xKey());refreshAll();}
+</script>
+</body></html>

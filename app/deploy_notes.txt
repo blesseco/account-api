@@ -1,0 +1,3 @@
+scp admin-modern-pack-v2.zip root@YOUR_VPS_IP:/opt/account-api/app/
+ssh root@YOUR_VPS_IP 'cd /opt/account-api/app && unzip -o admin-modern-pack-v2.zip && cp admin_pro_v2.html admin.html'
+echo 'Open https://YOUR_DOMAIN/admin?v=10'
